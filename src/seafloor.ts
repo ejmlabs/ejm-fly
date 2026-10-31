@@ -24,10 +24,10 @@ const HILLS = 300;
 const HILLS_FROM = 2000;
 const HILLS_FULL = 3000;
 
-export type Seafloor = {
+export interface Seafloor {
   /** Ground height at world X/Z (negative under water). */
   heightAt: (x: number, z: number) => number;
-};
+}
 
 /** Eases depths past SOFT_DEPTH toward ABYSS; C1 at the join, monotonic, identity above it. */
 export function softDepth(h: number): number {

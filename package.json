@@ -5,8 +5,12 @@
   "description": "A calm, procedurally generated ocean with a whale, ships and islands.",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "test:browser": "npm run build && npx tsx tools/smoke.ts",
@@ -15,19 +19,28 @@
     "dev": "vite"
   },
   "devDependencies": {
-    "@types/node": "20.19.43",
+    "@eslint-community/eslint-plugin-eslint-comments": "4.8.1",
+    "@eslint/js": "10.0.1",
+    "@tsconfig/strictest": "2.0.8",
+    "@types/node": "24.19.2",
     "@types/pngjs": "6.0.5",
     "@types/three": "0.186.0",
+    "eslint": "10.13.0",
+    "globals": "17.13.0",
     "playwright-core": "1.64.1",
     "pngjs": "7.0.0",
     "tsx": "4.20.5",
-    "typescript": "5.9.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.2",
     "vite": "6.4.5",
     "vitest": "4.1.12",
-    "wrangler": "4.151.3"
+    "wrangler": "4.153.0"
   },
   "dependencies": {
     "simplex-noise": "4.0.3",
     "three": "0.186.1"
+  },
+  "overrides": {
+    "minimatch": "11.0.3"
   }
 }

@@ -4,13 +4,13 @@ export function parseSeed(value: string | null | undefined): number | null {
   return Number.isInteger(number) && number <= 0xffffffff ? number : null;
 }
 
-export type SeedResolution = { seed: number; explicit: boolean };
+export interface SeedResolution { seed: number; explicit: boolean }
 
 export function resolveSeed(search = '', savedSeed?: number | null, entropy: () => number = Math.random): SeedResolution {
   const explicit = parseSeed(new URLSearchParams(search).get('seed'));
   if (explicit !== null) return { seed: explicit, explicit: true };
-  if (Number.isInteger(savedSeed) && savedSeed! >= 0 && savedSeed! <= 0xffffffff) {
-    return { seed: savedSeed as number, explicit: false };
+  if (typeof savedSeed === 'number' && Number.isInteger(savedSeed) && savedSeed >= 0 && savedSeed <= 0xffffffff) {
+    return { seed: savedSeed, explicit: false };
   }
   return { seed: Math.floor(entropy() * 0x100000000) >>> 0, explicit: false };
 }

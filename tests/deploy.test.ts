@@ -23,7 +23,7 @@ async function walk(directory: string): Promise<string[]> {
 
 test('meta CSP matches the header policy', async () => {
   const html = await readFile(resolve(root, 'index.html'), 'utf8');
-  const meta = html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]+)"/);
+  const meta = /http-equiv="Content-Security-Policy"\s+content="([^"]+)"/.exec(html);
   assert.ok(meta);
   assert.equal(meta[1], CSP);
   assert.equal(CSP_HEADER, `${CSP}; frame-ancestors 'none'`);
@@ -51,7 +51,7 @@ test('build output holds only the Vite public tree and host headers', async () =
 
   const html = await readFile(resolve(root, 'dist/index.html'), 'utf8');
   assert.equal(/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), false, 'no inline scripts');
-  const meta = html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]+)"/);
+  const meta = /http-equiv="Content-Security-Policy"\s+content="([^"]+)"/.exec(html);
   assert.ok(meta);
   assert.equal(meta[1], CSP);
   assert.match(html, /<script\b[^>]*\btype="module"[^>]*\bsrc="\/?assets\//i);

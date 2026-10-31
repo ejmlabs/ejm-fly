@@ -6,17 +6,16 @@ import {
   VISIBLE_LIGHT,
   WATER_IOR,
   WATER_LOOK,
-  acesFilmic,
   airAngle,
   blendFog,
   criticalAngle,
   depthLight,
-  radianceFor,
   seenLight,
   surfaceLight,
   waterTint,
   type FogState,
 } from '../src/underwater-optics.js';
+import { acesFilmic, radianceFor } from '../src/tone.js';
 import { floorCentre, visualFloor } from '../src/underwater-floor.js';
 
 test('water signal is 0 above the band, 1 below, and smooth and monotonic across it', () => {
@@ -31,8 +30,8 @@ test('water signal is 0 above the band, 1 below, and smooth and monotonic across
   let wasUnder = false;
   for (let y = 1; y >= -1; y -= 0.001) {
     const s = waterSignal(y);
-    assert.ok(s.submersion >= prev - 1e-12, `monotonic at ${y}`);
-    if (prev >= 0) assert.ok(s.submersion - prev < 0.01, `continuous at ${y}`);
+    assert.ok(s.submersion >= prev - 1e-12, `monotonic at ${String(y)}`);
+    if (prev >= 0) assert.ok(s.submersion - prev < 0.01, `continuous at ${String(y)}`);
     assert.equal(s.underwater, s.submersion > 0.5);
     if (s.underwater !== wasUnder) flips++;
     wasUnder = s.underwater;
@@ -58,8 +57,8 @@ test('fog blend hits both endpoints and moves monotonically between them', () =>
   let last = { d: 0, r: Infinity, b: Infinity };
   for (let s = 0; s <= 1.0001; s += 0.01) {
     blendFog(above, below, s, out);
-    assert.ok(out.density >= last.d, `density monotonic at ${s}`);
-    assert.ok(out.color.r <= last.r + 1e-12 && out.color.b <= last.b + 1e-12, `colour monotonic at ${s}`);
+    assert.ok(out.density >= last.d, `density monotonic at ${String(s)}`);
+    assert.ok(out.color.r <= last.r + 1e-12 && out.color.b <= last.b + 1e-12, `colour monotonic at ${String(s)}`);
     last = { d: out.density, r: out.color.r, b: out.color.b };
   }
   // Clamped outside 0..1.
@@ -69,7 +68,7 @@ test('fog blend hits both endpoints and moves monotonically between them', () =>
 
 test("Snell's window: critical angle ≈ 48.6° for sea water; light passes inside it, reflects outside", () => {
   const deg = (criticalAngle(WATER_IOR) * 180) / Math.PI;
-  assert.ok(Math.abs(deg - 48.6) < 0.1, `${deg}`);
+  assert.ok(Math.abs(deg - 48.6) < 0.1, String(deg));
   assert.equal(airAngle(0), 0);
   const inside = airAngle((40 * Math.PI) / 180);
   assert.ok(inside !== null && inside > (40 * Math.PI) / 180 && inside < Math.PI / 2);
@@ -89,7 +88,7 @@ test('underwater tint darkens with depth and visibility stays in the 55–90 m r
   assert.ok(b.density >= a.density);
   for (const f of [a, b]) {
     const visibility = Math.sqrt(-Math.log(0.05)) / f.density;
-    assert.ok(visibility > 55 && visibility < 90, `${visibility}`);
+    assert.ok(visibility > 55 && visibility < 90, String(visibility));
     assert.ok(f.color.b > f.color.r, 'blue-green, not red');
   }
   assert.ok(surfaceLight(0) === 1 && surfaceLight(10) < surfaceLight(5));
@@ -100,18 +99,16 @@ test('radiance solver round-trips display colours through ACES, including dark d
   for (const depth of [0, 4, 12, 30]) {
     const tint: FogState = { color: new THREE.Color(), density: 0 };
     waterTint(depth, 0.5, tint);
-    const radiance = radianceFor(tint.color, 0.42, THREE.ACESFilmicToneMapping);
+    const radiance = radianceFor(tint.color, 0.42);
     const back = acesFilmic(radiance, 0.42);
     for (const c of ['r', 'g', 'b'] as const) {
       assert.ok(Number.isFinite(radiance[c]) && radiance[c] >= 0);
       // ACES desaturates: a channel it cannot pull low enough ends at zero radiance instead.
       const reached = Math.abs(back[c] - tint.color[c]) < 0.004;
       const floored = radiance[c] < 1e-4 && back[c] > tint.color[c] && back[c] < tint.color[c] + 0.05;
-      assert.ok(reached || floored, `${depth} ${c}: ${back[c]} vs ${tint.color[c]}`);
+      assert.ok(reached || floored, `${String(depth)} ${c}: ${String(back[c])} vs ${String(tint.color[c])}`);
     }
   }
-  const plain = radianceFor(new THREE.Color(0.2, 0.3, 0.4), 0.5, THREE.NoToneMapping);
-  assert.ok(Math.abs(plain.g - 0.6) < 1e-9);
 });
 
 test('seafloor patch: drawn floor never sits above the real one and centres snap deterministically', () => {
@@ -132,7 +129,7 @@ test('view fog weight: none well above, full well below, never decreasing on the
   for (let y = 1; y >= -1; y -= 0.002) {
     const s = waterSignal(y);
     const m = fogMix(s.depth, s.submersion);
-    assert.ok(m >= prev - 1e-12 && m >= 0 && m <= 1, `${y}`);
+    assert.ok(m >= prev - 1e-12 && m >= 0 && m <= 1, String(y));
     prev = m;
   }
   assert.equal(fogMix(-1, 0), 0);
@@ -141,11 +138,11 @@ test('view fog weight: none well above, full well below, never decreasing on the
 
 test('light fails with depth, red first and blue last, and the deep stays dim but visible', () => {
   const c = depthLight(30, new THREE.Color());
-  assert.ok(c.r < 0.001 && c.g < c.b && c.b > 0.4, `30 m: ${c.r} ${c.g} ${c.b}`);
+  assert.ok(c.r < 0.001 && c.g < c.b && c.b > 0.4, `30 m: ${String(c.r)} ${String(c.g)} ${String(c.b)}`);
   assert.equal(seenLight(0), 1);
   let prev = 1;
   for (let d = 5; d <= 300; d += 5) {
-    assert.ok(seenLight(d) <= prev + 1e-12, `brighter at ${d} m`);
+    assert.ok(seenLight(d) <= prev + 1e-12, `brighter at ${String(d)} m`);
     prev = seenLight(d);
   }
   assert.ok(seenLight(60) < 0.5, 'dim by 60 m');

@@ -1,13 +1,15 @@
 import * as THREE from 'three';
 import { smoothstep } from './math.js';
 import { SHIP_SIZE, type ShipHandle } from './ships.js';
+import { item } from './item.js';
+import { drawAsAuthored } from './tone.js';
 
 /** The most ships drawn at once (the stream's cap on `high`). */
 export const SHIP_FX_CAPACITY = 8;
 /** Foam sits just above the flat water. */
 const LIFT = 0.05;
 
-export type ShipFx = {
+export interface ShipFx {
   /** Foam round each ship's hull and behind it (one draw), and its lanterns (one draw, at night only); in the ships' own space. */
   group: THREE.Group;
   /** `level` is the sky's brightness, 0 (night) to 1 (day). */
@@ -15,7 +17,7 @@ export type ShipFx = {
   /** Draws made last frame. */
   draws: () => number;
   dispose: () => void;
-};
+}
 
 /** A square texture whose alpha is a soft ellipse or disc, made here rather than shipped. */
 function softMap(size: number, power: number): THREE.DataTexture {
@@ -41,7 +43,7 @@ export function createShipFx(surface: (x: number, z: number) => number = () => 0
   const lampMap = softMap(16, 2);
   const flat = new THREE.PlaneGeometry(1, 1);
   flat.rotateX(-Math.PI / 2);
-  const foamMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, alphaMap: foamMap, transparent: true, opacity: 0.5, depthWrite: false, toneMapped: false, fog: false });
+  const foamMaterial = drawAsAuthored(new THREE.MeshBasicMaterial({ color: 0xffffff, alphaMap: foamMap, transparent: true, opacity: 0.5, depthWrite: false, fog: false }));
   const foam = new THREE.InstancedMesh(flat, foamMaterial, SHIP_FX_CAPACITY * 2);
   foam.frustumCulled = false;
   foam.renderOrder = 1;
@@ -50,7 +52,7 @@ export function createShipFx(surface: (x: number, z: number) => number = () => 0
   const lampPositions = new Float32Array(SHIP_FX_CAPACITY * 4 * 3);
   const lampGeometry = new THREE.BufferGeometry();
   lampGeometry.setAttribute('position', new THREE.BufferAttribute(lampPositions, 3).setUsage(THREE.DynamicDrawUsage));
-  const lampMaterial = new THREE.PointsMaterial({
+  const lampMaterial = drawAsAuthored(new THREE.PointsMaterial({
     color: 0xffc878,
     size: 7,
     sizeAttenuation: false,
@@ -59,9 +61,8 @@ export function createShipFx(surface: (x: number, z: number) => number = () => 0
     opacity: 0,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
-    toneMapped: false,
     fog: false,
-  });
+  }));
   const lamps = new THREE.Points(lampGeometry, lampMaterial);
   lamps.frustumCulled = false;
   lamps.visible = false;
@@ -80,7 +81,7 @@ export function createShipFx(surface: (x: number, z: number) => number = () => 0
       foam.visible = n > 0;
       foam.count = n * 2;
       for (let i = 0; i < n; i++) {
-        const ship = ships[i]!;
+        const ship = item(ships, i);
         const size = ship.spec.scale * SHIP_SIZE;
         const p = ship.group.position;
         // The ship's length lies along its own +X, turned by its heading.
@@ -108,7 +109,7 @@ export function createShipFx(surface: (x: number, z: number) => number = () => 0
       let count = 0;
       if (glow > 0.01) {
         for (let i = 0; i < n; i++) {
-          const ship = ships[i]!;
+          const ship = item(ships, i);
           const size = ship.spec.scale * SHIP_SIZE;
           for (const local of ship.lanterns) {
             lamp.copy(local).multiplyScalar(size).applyQuaternion(ship.group.quaternion).add(ship.group.position);
@@ -118,7 +119,7 @@ export function createShipFx(surface: (x: number, z: number) => number = () => 0
         }
       }
       lampGeometry.setDrawRange(0, count);
-      lampGeometry.attributes['position']!.needsUpdate = true;
+      item(lampGeometry.attributes, 'position').needsUpdate = true;
       lampMaterial.opacity = glow;
       lamps.visible = count > 0;
       drawn = (foam.visible ? 1 : 0) + (lamps.visible ? 1 : 0);

@@ -45,7 +45,7 @@ export type Land = Shore & {
   viewYaw: number;
 };
 
-export type LandGrid = {
+export interface LandGrid {
   /** World X/Z of texel (0, 0) centre. */
   min: number;
   cell: number;
@@ -54,20 +54,20 @@ export type LandGrid = {
   mask: Float32Array;
   /** Signed distance to the coast in metres: > 0 at sea, < 0 on land. */
   distance: Float32Array;
-};
+}
 
-export type LandOptions = {
+export interface LandOptions {
   /** Camera yaw the main view looks along; land is anchored ahead of it. */
   viewYaw: number;
   /** Navigation / shallow grid resolution (texels per side). */
-  gridSize?: number;
+  gridSize?: number | undefined;
   /** Half-extent of the navigation grid in metres. */
   gridExtent?: number;
   /** Skip the opening search and use this continent offset (from `land.offset`). */
   offset?: { x: number; z: number };
   /** False leaves out the rocks and islets of the open sea (tests compare against it). */
   landmarks?: boolean;
-};
+}
 
 /** The planet's layout takes over the mask from the first radius and wholly by the second (the opening view's coast lies within 2 km). */
 export const REGION_FROM = 2200;
@@ -90,7 +90,7 @@ export const HARBOUR_RADIUS = 260;
  */
 export function coastSpread(hits: readonly number[]): number {
   const sorted = [...hits].sort((a, b) => a - b);
-  return sorted[sorted.length - 2]! - sorted[1]!;
+  return (sorted[sorted.length - 2] ?? 0) - (sorted[1] ?? 0);
 }
 
 /** Bearings either side of the view scored for composition (fits a portrait frame). */
@@ -106,7 +106,7 @@ export function depthForMask(mask: number, steep = 0): number {
   return s * shelf + Math.max(0, s - 0.45) * 260;
 }
 
-type Channels = {
+interface Channels {
   warpA: NoiseFunction2D;
   warpB: NoiseFunction2D;
   continent: NoiseFunction2D;
@@ -120,7 +120,7 @@ type Channels = {
   range: NoiseFunction2D;
   gully: NoiseFunction2D;
   erode: NoiseFunction2D;
-};
+}
 
 function channels(seed: number): Channels {
   const s = hash(seed, 'land');
@@ -475,7 +475,7 @@ function buildGrid(maskAt: (x: number, z: number) => number, size: number, exten
   // Signed: positive at sea (metres to land), negative on land (metres to sea).
   const distance = new Float32Array(size * size);
   for (let i = 0; i < distance.length; i++) {
-    distance[i] = toLand[i]! > 0 ? Math.sqrt(toLand[i]!) * cell : -Math.sqrt(toSea[i]!) * cell;
+    distance[i] = (toLand[i] ?? 0) > 0 ? Math.sqrt(toLand[i] ?? 0) * cell : -Math.sqrt(toSea[i] ?? 0) * cell;
   }
   return { min, cell, size, mask, distance };
 }
@@ -494,14 +494,14 @@ export function landFraction(land: Land, extent = 4000, steps = 64): number {
 }
 
 /** Shallowness per texel for the water shader: 1 at the shore, 0 at ≥ 40 m depth. */
-export type ShelfMap = {
+export interface ShelfMap {
   data: Uint8Array;
   size: number;
   /** World X (and Z unless `minZ` is set) of texel (0, 0) centre. */
   min: number;
   minZ?: number;
   extent: number;
-};
+}
 
 /** Water depth (metres) by distance from the coast: a wide sandy shelf, then the drop-off. */
 export function depthForDistance(metres: number): number {
@@ -530,7 +530,7 @@ function openEdges(data: Uint8Array, size: number): void {
 
 function shelfFromDistance(distance: ArrayLike<number>, size: number, min: number, extent: number): ShelfMap {
   const data = new Uint8Array(size * size);
-  for (let i = 0; i < data.length; i++) data[i] = shelfTexel(distance[i]!);
+  for (let i = 0; i < data.length; i++) data[i] = shelfTexel(distance[i] ?? 0);
   openEdges(data, size);
   return { data, size, min, extent };
 }
@@ -614,7 +614,7 @@ function addSandBanks(land: Land, shelf: ShelfMap, minX: number, minZ: number, c
       if (x * x + z * z > 1700 * 1700) continue;
       const i = iz * size + ix;
       const t = land.shoalAt(x, z);
-      if (t > 0) shelf.data[i] = Math.max(shelf.data[i]!, Math.round(shelf.data[i]! + (bank - shelf.data[i]!) * t));
+      if (t > 0) shelf.data[i] = Math.max(shelf.data[i] ?? 0, Math.round((shelf.data[i] ?? 0) + (bank - (shelf.data[i] ?? 0)) * t));
     }
   }
 }

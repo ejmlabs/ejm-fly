@@ -6,7 +6,7 @@ import { FLIPPER_LENGTH, FLUKE_HALF_SPAN, WHALE_LOD, buildWhaleGeometry } from '
 import { BREACH_APEX_Y, SHALLOW_Y, SURFACE_Y } from '../src/whale-motion.js';
 import { BODY_DEPTH, DEPTH_SCALE, LENGTH_SCALE, WHALE_LENGTH } from '../src/whale-size.js';
 
-const near = (a: number, b: number, what: string) => assert.ok(Math.abs(a - b) < 1e-9 * Math.max(1, Math.abs(b)), `${what}: ${a} vs ${b}`);
+const near = (a: number, b: number, what: string) => { assert.ok(Math.abs(a - b) < 1e-9 * Math.max(1, Math.abs(b)), `${what}: ${String(a)} vs ${String(b)}`); };
 
 test('every size derives from the whale length and body depth', () => {
   near(LENGTH_SCALE, WHALE_LENGTH / 12, 'length scale');
@@ -30,7 +30,8 @@ test('every size derives from the whale length and body depth', () => {
 
 test('the built whale is as long as WHALE_LENGTH', () => {
   const geometry = buildWhaleGeometry('medium').geometry;
-  const box = geometry.boundingBox!;
+  const box = geometry.boundingBox;
+  assert.ok(box);
   const length = box.max.x - box.min.x;
-  assert.ok(Math.abs(length / WHALE_LENGTH - 1) < 0.02, `${length} m`);
+  assert.ok(Math.abs(length / WHALE_LENGTH - 1) < 0.02, `${String(length)} m`);
 });

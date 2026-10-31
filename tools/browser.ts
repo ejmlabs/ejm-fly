@@ -1,31 +1,29 @@
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core';
+import { chromium, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from 'playwright-core';
 import { startServer } from './serve.js';
 
-export type DeviceProfile = {
+export interface DeviceProfile {
   name: string;
-  viewport: { width: number; height: number };
-  deviceScaleFactor: number;
-  isMobile?: boolean;
-  hasTouch?: boolean;
-  userAgent?: string;
-};
+  context: BrowserContextOptions;
+}
 
-export const DESKTOP: DeviceProfile = { name: 'desktop', viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
+export const DESKTOP: DeviceProfile = { name: 'desktop', context: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 } };
 export const MOBILE: DeviceProfile = {
   name: 'mobile',
-  viewport: { width: 390, height: 844 },
-  deviceScaleFactor: 3,
-  isMobile: true,
-  hasTouch: true,
-  userAgent: 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36',
+  context: {
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 3,
+    isMobile: true,
+    hasTouch: true,
+    userAgent: 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36',
+  },
 };
 
 /** Headless system Chrome with software WebGL. */
 export function launchBrowser(): Promise<Browser> {
-  const executablePath = process.env.BROWSER_PATH || '/usr/bin/google-chrome';
+  const executablePath = process.env['BROWSER_PATH'] ?? '/usr/bin/google-chrome';
   const args = ['--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'];
   // Opt in with BROWSER_NO_SANDBOX=1. Default keeps the sandbox on.
-  if (process.env.BROWSER_NO_SANDBOX === '1') args.unshift('--no-sandbox');
+  if (process.env['BROWSER_NO_SANDBOX'] === '1') args.unshift('--no-sandbox');
   return chromium.launch({ executablePath, headless: true, args });
 }
 
@@ -41,20 +39,20 @@ export async function withBrowser<T>(run: (browser: Browser, url: string) => Pro
   }
 }
 
-export type OpenCalmOptions = {
+export interface OpenCalmOptions {
   seed?: number | null;
   reducedMotion?: 'no-preference' | 'reduce';
   storage?: unknown;
   query?: Record<string, string>;
   instrument?: boolean;
-};
+}
 
-export type OpenCalmResult = {
+export interface OpenCalmResult {
   page: Page;
   context: BrowserContext;
   errors: string[];
   external: string[];
-};
+}
 
 export async function openCalm(
   browser: Browser,
@@ -62,8 +60,7 @@ export async function openCalm(
   device: DeviceProfile,
   { seed = 42, reducedMotion = 'no-preference', storage, query = {}, instrument = false }: OpenCalmOptions = {},
 ): Promise<OpenCalmResult> {
-  const { name: _name, ...options } = device;
-  const context = await browser.newContext({ ...options, reducedMotion });
+  const context = await browser.newContext({ ...device.context, reducedMotion });
   if (storage) {
     await context.addInitScript((value) => {
       localStorage.setItem('ejm-calm:v1', JSON.stringify(value));
@@ -75,9 +72,9 @@ export async function openCalm(
       const w = window as unknown as DrawWindow;
       w.__draws = 0;
       w.__frameDraws = [];
-      const request = window.requestAnimationFrame;
+      const request = window.requestAnimationFrame.bind(window);
       window.requestAnimationFrame = (callback: FrameRequestCallback) =>
-        request.call(window, (time) => {
+        request((time) => {
           const before = w.__draws;
           callback(time);
           const draws = w.__draws - before;
@@ -87,6 +84,7 @@ export async function openCalm(
           }
         });
       for (const method of ['drawArrays', 'drawElements', 'drawArraysInstanced', 'drawElementsInstanced'] as const) {
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- the original is re-applied with each call's own context below
         const original = WebGL2RenderingContext.prototype[method] as (...args: unknown[]) => unknown;
         (WebGL2RenderingContext.prototype as unknown as Record<string, unknown>)[method] = function (this: WebGL2RenderingContext, ...args: unknown[]) {
           w.__draws++;
@@ -113,7 +111,7 @@ export async function openCalm(
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30000 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`${message}\n${errors.join('\n')}\n${await page.locator('#veilText').textContent()}`);
+    throw new Error(`${message}\n${errors.join('\n')}\n${String(await page.locator('#veilText').textContent())}`, { cause: error });
   }
   return { page, context, errors, external };
 }

@@ -1,5 +1,6 @@
 import { smoothstep } from './math.js';
 import { LATITUDE_SPAN, type Planet } from './planet.js';
+import { item } from './item.js';
 
 /** Width over which a border between two regions blends. */
 export const REGION_BLEND = 5000;
@@ -13,7 +14,7 @@ export type RegionId = 0 | 1 | 2 | 3;
 export type RegionWeights = [number, number, number, number];
 
 /** Everything a region changes. Colours are sRGB hex; factors are multipliers of the scene's own value. */
-export type RegionLook = {
+export interface RegionLook {
   name: string;
   /** Multiplies the offshore islet lift. */
   isletGain: number;
@@ -28,7 +29,7 @@ export type RegionLook = {
   /** Share of gulls, terns, albatrosses. */
   birds: [number, number, number];
   ships: number;
-};
+}
 
 export const REGION_LOOKS: readonly RegionLook[] = [
   { name: 'Temperate', isletGain: 1, water: 0x1a4e68, fog: 0x163e54, fogMix: 0, fogDensity: 1, hazeDensity: 1, land: [1, 1, 1], birds: [0.5, 0.35, 0.15], ships: 0.6 },
@@ -37,12 +38,12 @@ export const REGION_LOOKS: readonly RegionLook[] = [
   { name: 'Deep blue', isletGain: 0.25, water: 0x123e66, fog: 0x1a4a78, fogMix: 0.3, fogDensity: 0.8, hazeDensity: 0.9, land: [1, 1, 1], birds: [0.15, 0.1, 0.75], ships: 0.7 },
 ];
 
-export type Regions = {
+export interface Regions {
   /** Blend weights (summing to 1) of the four regions at a world position. */
   weightsAt: (x: number, z: number, out?: RegionWeights) => RegionWeights;
   /** Region with the largest weight. */
   dominantAt: (x: number, z: number) => RegionId;
-};
+}
 
 /**
  * The four seas on the planet's layout: tropical, temperate and polar by latitude (the bands blend over about
@@ -76,7 +77,7 @@ export function createRegions(planet: Pick<Planet, 'latitudeAt' | 'openAt'>): Re
     dominantAt(x, z) {
       weightsAt(x, z, scratch);
       let best = 0;
-      for (let k = 1; k < 4; k++) if (scratch[k]! > scratch[best]!) best = k;
+      for (let k = 1; k < 4; k++) if ((scratch[k] ?? 0) > (scratch[best] ?? 0)) best = k;
       return best as RegionId;
     },
   };
@@ -85,6 +86,6 @@ export function createRegions(planet: Pick<Planet, 'latitudeAt' | 'openAt'>): Re
 /** Weighted sum of one numeric field of the looks. */
 export function blendLook(weights: RegionWeights, pick: (look: RegionLook) => number): number {
   let sum = 0;
-  for (let k = 0; k < 4; k++) sum += weights[k]! * pick(REGION_LOOKS[k]!);
+  for (let k = 0; k < 4; k++) sum += (weights[k] ?? 0) * pick(item(REGION_LOOKS, k));
   return sum;
 }

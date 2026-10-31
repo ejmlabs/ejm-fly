@@ -74,7 +74,7 @@ export const BREACH_ROLL = 1.75;
 /** Extra forward speed (m/s) through the rise and flight, on top of the cruise. */
 export const BREACH_SURGE = 2.4;
 
-export type WhalePose = {
+export interface WhalePose {
   /** Body-origin height. */
   y: number;
   /** Nose-up angle, radians. */
@@ -95,7 +95,7 @@ export type WhalePose = {
   bob: number;
   /** Extra forward speed along the heading, m/s. */
   surge: number;
-};
+}
 
 export function emptyPose(): WhalePose {
   return { y: 0, pitch: 0, roll: 0, arch: 0, stroke: 1, rate: 1, flipLift: 0, flipSweep: 0, bob: 1, surge: 0 };
@@ -271,7 +271,7 @@ export function floorLimit(y: number, floorY: number | undefined): number {
   return limit + ((u + FLOOR_SOFT) * (u + FLOOR_SOFT)) / (4 * FLOOR_SOFT);
 }
 
-export const POSE_KEYS: Array<keyof WhalePose> = ['y', 'pitch', 'roll', 'arch', 'stroke', 'rate', 'flipLift', 'flipSweep', 'bob', 'surge'];
+export const POSE_KEYS: (keyof WhalePose)[] = ['y', 'pitch', 'roll', 'arch', 'stroke', 'rate', 'flipLift', 'flipSweep', 'bob', 'surge'];
 
 /* ---------------------------------------------------------------- spine */
 
@@ -281,7 +281,7 @@ const TAIL_ARCH = [0.05, 0.09, 0.13, 0.15, 0.06];
 const HEAD_AMP = [0.012, 0.008];
 const WAVE_LAG = 0.62;
 
-export type SpineAngles = { head: number[]; tail: number[] };
+export interface SpineAngles { head: number[]; tail: number[] }
 
 /**
  * Bend angles about the body Z axis for a travelling wave that runs head → fluke.
@@ -289,10 +289,10 @@ export type SpineAngles = { head: number[]; tail: number[] };
  */
 export function spineAngles(strokePhase: number, stroke: number, arch: number, out: SpineAngles = { head: [0, 0], tail: [0, 0, 0, 0, 0] }): SpineAngles {
   for (let i = 0; i < TAIL_AMP.length; i++) {
-    out.tail[i] = stroke * TAIL_AMP[i]! * Math.sin(strokePhase - (i + 1) * WAVE_LAG) + arch * TAIL_ARCH[i]!;
+    out.tail[i] = stroke * (TAIL_AMP[i] ?? 0) * Math.sin(strokePhase - (i + 1) * WAVE_LAG) + arch * (TAIL_ARCH[i] ?? 0);
   }
   for (let i = 0; i < HEAD_AMP.length; i++) {
-    out.head[i] = -stroke * HEAD_AMP[i]! * Math.sin(strokePhase + 0.4) + arch * 0.12;
+    out.head[i] = -stroke * (HEAD_AMP[i] ?? 0) * Math.sin(strokePhase + 0.4) + arch * 0.12;
   }
   return out;
 }

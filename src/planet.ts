@@ -10,7 +10,7 @@ import { clamp, smoothstep } from './math.js';
  * stand far off (or are not there at all) most of the time. Land is a mask in the land mask's units: below
  * MACRO_OPEN nothing the coast detail adds reaches the surface.
  */
-export type Planet = {
+export interface Planet {
   /** Heading of the migration (whale convention: forward is (−cos h, sin h)); the current's steady flow runs along it. */
   heading: number;
   /** Macro land mask: > 0 land, < 0 sea, clamped to [MACRO_FLOOR, MACRO_CEIL]; the coast detail goes on top. */
@@ -23,7 +23,7 @@ export type Planet = {
   laneCentre: (s: number) => { x: number; z: number };
   /** Distance from the equator in [0, 1] (1 at a pole); the start lies at 0.5. */
   latitudeAt: (x: number, z: number) => number;
-};
+}
 
 /** Macro mask clamps: the open ocean sits at the floor, continent interiors at the ceiling. */
 export const MACRO_FLOOR = -1.6;
@@ -117,9 +117,10 @@ export function createPlanet(seed: number, heading: number): Planet {
   /** Integrates chunk k (midpoint rule) from the end of its neighbour nearer the origin, or from 0 at the origin. */
   function integrate(k: number): Float64Array {
     const dir = k >= 0 ? 1 : -1;
-    const prev = k === 0 || k === -1 ? null : chunks.get(k - dir)!;
+    const prev = k === 0 || k === -1 ? null : chunks.get(k - dir);
+    if (prev === undefined) throw new Error(`lane chunk ${String(k - dir)} is integrated after ${String(k)}`);
     const out = new Float64Array(LANE_CHUNK + 1);
-    let c = prev ? prev[dir > 0 ? LANE_CHUNK : 0]! : 0;
+    let c = prev ? prev[dir > 0 ? LANE_CHUNK : 0] ?? 0 : 0;
     const start = k >= 0 ? k * LANE_CHUNK : (k + 1) * LANE_CHUNK;
     for (let i = 0; i <= LANE_CHUNK; i++) {
       const at = dir > 0 ? i : LANE_CHUNK - i;
@@ -151,7 +152,7 @@ export function createPlanet(seed: number, heading: number): Planet {
     const local = f - k * LANE_CHUNK;
     const i = Math.min(LANE_CHUNK - 1, Math.floor(local));
     const t = local - i;
-    return data[i]! + (data[i + 1]! - data[i]!) * t;
+    return (data[i] ?? 0) + ((data[i + 1] ?? 0) - (data[i] ?? 0)) * t;
   }
 
   const lane = { s: 0, q: 0 };

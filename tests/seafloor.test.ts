@@ -25,12 +25,12 @@ test('seafloor matches the land on land and on the shallow shelf, and is determi
       else shelf++;
     } else {
       // Relief never lifts the floor into the shelf band, and deep water stays within sight.
-      assert.ok(h < -RELIEF_START + 1e-9 + 0.0, `${base} → ${h}`);
-      assert.ok(h > -ABYSS - 3, `${h}`);
+      assert.ok(h < -RELIEF_START + 1e-9 + 0.0, `${String(base)} → ${String(h)}`);
+      assert.ok(h > -ABYSS - 3, String(h));
       if (Math.abs(h - softDepth(base)) > 0.5) relief++;
     }
   }
-  assert.ok(onLand > 50 && shelf > 5 && relief > 100, `${onLand} ${shelf} ${relief}`);
+  assert.ok(onLand > 50 && shelf > 5 && relief > 100, `${String(onLand)} ${String(shelf)} ${String(relief)}`);
   // A different seed gives different relief over the same land.
   const other = createSeafloor(7, land);
   let differs = 0;
@@ -53,7 +53,7 @@ test('feed sites are deterministic, stable, clear of floor and surface, nearest 
   const a = feedSitesNear(42, 100, -50, 2000, floor.heightAt);
   const b = feedSitesNear(42, 100, -50, 2000, floor.heightAt);
   assert.deepEqual(a, b);
-  assert.ok(a.length > 3, `${a.length}`);
+  assert.ok(a.length > 3, String(a.length));
   let prev = -1;
   for (const site of a) {
     const d = Math.hypot(site.x - 100, site.z + 50);

@@ -1,4 +1,4 @@
-import { test } from 'vitest';
+import { test, expect } from 'vitest';
 import * as THREE from 'three';
 import assert from 'node:assert/strict';
 import { SWELL_MAX, swellAt } from '../src/swell.js';
@@ -7,6 +7,7 @@ import { createQuality, detailFor, updateQuality } from '../src/quality.js';
 import { stepFlock, type Boid } from '../src/flock.js';
 import { createBirds } from '../src/birds.js';
 import { buildBird, SPECIES, triangleCount } from '../src/bird-mesh.js';
+import { item } from '../src/item.js';
 
 test('swell is deterministic, bounded and its slope matches the height', () => {
   const a = swellAt(120.5, -33, 7.25);
@@ -14,7 +15,7 @@ test('swell is deterministic, bounded and its slope matches the height', () => {
   assert.deepEqual(a, b);
   let peak = 0;
   for (let i = 0; i < 4000; i++) peak = Math.max(peak, Math.abs(swellAt(i * 3.7, i * -1.9, i * 0.05).height));
-  assert.ok(peak <= SWELL_MAX + 1e-9 && peak > SWELL_MAX * 0.6, `peak ${peak}`);
+  assert.ok(peak <= SWELL_MAX + 1e-9 && peak > SWELL_MAX * 0.6, `peak ${String(peak)}`);
   const e = 0.01;
   const slope = swellAt(50, 20, 3);
   const dx = (swellAt(50 + e, 20, 3).height - swellAt(50 - e, 20, 3).height) / (2 * e);
@@ -46,7 +47,7 @@ test('detail follows the quality tier and steps down with it', () => {
   assert.equal(detailFor('medium').birds, 16);
   assert.equal(detailFor('high').birds, 24);
   const state = createQuality({ software: false, cores: 16, memory: 16, dpr: 2 });
-  assert.equal(state.tier, 'high');
+  expect(state.tier).toBe('high');
   for (let i = 0; i < 80 && state.tier === 'high'; i++) updateQuality(state, 100);
   assert.equal(state.tier, 'medium');
   assert.equal(detailFor(state.tier).birds, 16);
@@ -68,21 +69,21 @@ test('a flock stays bounded, above the water, and follows its leader without tel
     leader.x = step * 0.2;
     const before = boids.map((b) => [b.x, b.z]);
     stepFlock(boids, [leader], params, 0.1);
-    boids.forEach((b, i) => assert.ok(Math.hypot(b.x - before[i]![0]!, b.z - before[i]![1]!) < 20 * 0.1 + 1e-6, 'no jump'));
+    boids.forEach((b, i) => { assert.ok(Math.hypot(b.x - (item(before, i)[0] ?? 0), b.z - (item(before, i)[1] ?? 0)) < 20 * 0.1 + 1e-6, 'no jump'); });
     for (const b of boids) {
       assert.ok(b.y >= 5 && b.y <= 70);
       farthest = Math.max(farthest, Math.hypot(b.x - leader.x, b.z - leader.z));
     }
   }
-  assert.ok(farthest < 400, `flock stays near its leader: ${farthest}`);
+  assert.ok(farthest < 400, `flock stays near its leader: ${String(farthest)}`);
 });
 
 test('boids keep apart', () => {
   const boids = flock(2);
-  boids[0]!.x = 0; boids[0]!.z = 0; boids[1]!.x = 0.5; boids[1]!.z = 0;
-  boids[0]!.y = boids[1]!.y = 20;
+  item(boids, 0).x = 0; item(boids, 0).z = 0; item(boids, 1).x = 0.5; item(boids, 1).z = 0;
+  item(boids, 0).y = item(boids, 1).y = 20;
   stepFlock(boids, [{ x: 0, y: 20, z: 0 }], { speeds: [9], minHeight: 5, maxHeight: 70 }, 0.5);
-  assert.ok(Math.hypot(boids[0]!.x - boids[1]!.x, boids[0]!.z - boids[1]!.z) > 0.5);
+  assert.ok(Math.hypot(item(boids, 0).x - item(boids, 1).x, item(boids, 0).z - item(boids, 1).z) > 0.5);
 });
 
 test('bird meshes have three levels of detail with a wing weight and no lines or points', () => {
@@ -95,8 +96,8 @@ test('bird meshes have three levels of detail with a wing weight and no lines or
       assert.equal(max, 1, 'wing tips carry full weight');
       return triangleCount(geometry);
     });
-    assert.ok(counts[0]! > counts[1]! && counts[1]! > counts[2]!, `${species.name}: ${counts}`);
-    assert.ok(counts[0]! <= 200 && counts[2]! >= 8, `${species.name}: ${counts}`);
+    assert.ok((counts[0] ?? 0) > (counts[1] ?? 0) && (counts[1] ?? 0) > (counts[2] ?? 0), `${species.name}: ${String(counts)}`);
+    assert.ok((counts[0] ?? 0) <= 200 && (counts[2] ?? 0) >= 8, `${species.name}: ${String(counts)}`);
   }
 });
 
@@ -128,9 +129,9 @@ test('birds fade out on a tier step-down and rejoin their leaders on step-up', (
   for (const mesh of birds.group.children as THREE.InstancedMesh[]) {
     for (let i = 0; i < mesh.count; i++) {
       mesh.getMatrixAt(i, matrix);
-      xs.push(matrix.elements[12]!);
+      xs.push(matrix.elements[12]);
     }
   }
-  assert.ok(Math.max(...xs) - Math.min(...xs) < 400, `flock spans ${Math.max(...xs) - Math.min(...xs)} m`);
+  assert.ok(Math.max(...xs) - Math.min(...xs) < 400, `flock spans ${String(Math.max(...xs) - Math.min(...xs))} m`);
   birds.dispose();
 });

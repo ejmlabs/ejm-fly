@@ -6,6 +6,7 @@ import { makeNoise2D } from './noise.js';
 import { clamp, smoothstep } from './math.js';
 import { cellDistance, chunksAround, createChunkStreamer, parseChunkKey, type ChunkStreamer } from './chunks.js';
 import { GLSL_SCENERY } from './underwater-glsl.js';
+import { item } from './item.js';
 
 /**
  * Seafloor life streamed in world cells around the camera: kelp, seagrass,
@@ -26,7 +27,7 @@ const FOOT_SINK = 0.12;
 
 export type LifeKind = 'kelp' | 'grass' | 'rock';
 
-export type LifeInstance = {
+export interface LifeInstance {
   kind: LifeKind;
   /** World foot position. */
   x: number;
@@ -39,9 +40,9 @@ export type LifeInstance = {
   phase: number;
   /** 0 plain rock, otherwise a coral tint index 1..3. */
   tint: number;
-};
+}
 
-export type School = { id: number; x: number; y: number; z: number; loop: number; speed: number; phase: number; spread: number };
+export interface School { id: number; x: number; y: number; z: number; loop: number; speed: number; phase: number; spread: number }
 
 type Floor = (x: number, z: number) => number;
 
@@ -196,8 +197,8 @@ function mergeGeometries(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
   let offset = 0;
   for (const f of flat) {
     f.computeVertexNormals();
-    position.set(f.getAttribute('position').array as Float32Array, offset);
-    normal.set(f.getAttribute('normal').array as Float32Array, offset);
+    position.set(f.getAttribute('position').array, offset);
+    normal.set(f.getAttribute('normal').array, offset);
     offset += f.getAttribute('position').count * 3;
   }
   for (const p of parts) p.dispose();
@@ -227,7 +228,7 @@ export function absorb(shader: THREE.WebGLProgramParametersWithUniforms): void {
     );
 }
 
-type Shared = { uTime: THREE.IUniform<number>; uWhale: THREE.IUniform<THREE.Vector3>; uFar: THREE.IUniform<number> };
+interface Shared { uTime: THREE.IUniform<number>; uWhale: THREE.IUniform<THREE.Vector3>; uFar: THREE.IUniform<number> }
 
 /** Lambert with the scenery fade, plus a current-driven sway that grows with height (`sway` metres at the top). */
 function lifeMaterial(shared: Shared, color: number, sway: number, options: THREE.MeshLambertMaterialParameters = {}): THREE.MeshLambertMaterial {
@@ -253,19 +254,19 @@ function lifeMaterial(shared: Shared, color: number, sway: number, options: THRE
       );
     absorb(shader);
   };
-  material.customProgramCacheKey = () => `underwater-life-${sway}`;
+  material.customProgramCacheKey = () => `underwater-life-${String(sway)}`;
   return material;
 }
 
 /* ---------------------------------------------------------------- handle */
 
-export type UnderwaterLife = {
+export interface UnderwaterLife {
   group: THREE.Group;
   /** Stream cells around the camera; `draw` false only warms caches. */
   update: (time: number, camWorldX: number, camWorldZ: number, whaleRender: THREE.Vector3, origin: FloatingOrigin, draw: boolean) => void;
   stats: () => { cells: number; instances: number; schools: number };
   dispose: () => void;
-};
+}
 
 export function createUnderwaterLife(seed: number, floorAt: Floor, tierName: QualityTier, layer: number): UnderwaterLife {
   const tier = TIER[tierName];
@@ -418,7 +419,7 @@ export function createUnderwaterLife(seed: number, floorAt: Floor, tierName: Qua
         // Rock geometry stands 1.25 tall; scale y so the instance's height is its true extent.
         if (inst.kind === 'rock') vScale.y = inst.height / 1.25;
         mesh.setMatrixAt(i, matrix.compose(vPos, quat, vScale));
-        if (inst.kind === 'rock') mesh.setColorAt(i, tints[inst.tint]!);
+        if (inst.kind === 'rock') mesh.setColorAt(i, item(tints, inst.tint));
         counts[inst.kind] = i + 1;
       }
     }

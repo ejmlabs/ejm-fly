@@ -12,16 +12,16 @@ const PEAK = 2.6;
 /** Largest islet gain a caller may pass (the radius grows with its square root). */
 const GAIN_MAX = 1.7;
 
-export type Landmark = { x: number; z: number; radius: number };
+export interface Landmark { x: number; z: number; radius: number }
 
-export type Landmarks = {
+export interface Landmarks {
   /** The landmark of lattice cell (i, j), whether or not it stands (see `createLandmarks`). */
   cell: (i: number, j: number) => Landmark;
   /** Lift to add to the land mask at (x, z): 0 away from the landmark of its cell. The radius grows with the square root of `gain` (a region's islet gain, at most 1.7). */
   at: (x: number, z: number, gain?: number) => number;
   /** Forgets which landmarks stand: call when the land underneath changes (the search for the opening offset). */
   reset: () => void;
-};
+}
 
 /**
  * Seeded rocks and islets spaced across the sea, one per 2 km cell: something always passes within reach of the route.

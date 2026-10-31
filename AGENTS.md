@@ -71,6 +71,9 @@ there. A rule below or a repository skill may add to them, never relax them.
   desktop GPU number. `FOLLOWUP.md` lists the device figures still owed.
 - Keep `README.md` (controls, tools, review hooks) and `FOLLOWUP.md` (known limits) current in
   the same change.
+- Node 24 only (`engines`, with `engine-strict` in `.npmrc`), exact pins (`save-exact`). Types
+  extend `@tsconfig/strictest`; lint is the synced strict layer with zero warnings. The code
+  conventions that keep it that way are in [calm-scene](.agents/skills/calm-scene/SKILL.md).
 
 ## Map
 
@@ -85,13 +88,14 @@ there. A rule below or a repository skill may add to them, never relax them.
 | `tools/`, `shots/` | Browser smoke, shot tools, long runs, seed sweep, load time, frame cost; reference shots |
 | `assets/audio/` | Sounds and their licensed sources (`SOURCES.md`) |
 | `public/_headers`, `wrangler.jsonc` | Static headers and the Worker config |
+| `tsconfig.json`, `eslint.config.mjs`, `eslint.strict.mjs` | Strictest types; the strict lint layer (synced, never edited here) and this repository's globals |
 | `openspec/`, `FOLLOWUP.md` | Plans and specs; known limits and owed device figures |
 
 ## Commands
 
 ```sh
 # The gate, on the PR head before merge (Chrome needed for test:browser)
-npm ci --ignore-scripts && npm test && npm run test:browser
+npm ci --ignore-scripts && npm run lint && npm test && npm run test:browser
 
 # Focused
 npm run typecheck

@@ -14,6 +14,26 @@ KISS, YAGNI, DRY and Clean Code: the simplest code that solves the whole problem
 task needs now, one authoritative home for each rule, and clear names, small functions and
 structure.
 
+## Code
+
+- Types extend `@tsconfig/strictest` and lint is the synced strict layer (`eslint.strict.mjs`)
+  with zero warnings. No `any`, no `!`, and no `as` that quiets the checker; an `as` that widens
+  a library's too-narrow type (three's `mergeGeometries` can return null) says why beside it.
+- Reading arrays: a numeric array read inside its own loop bounds uses `values[i] ?? 0`, which
+  keeps hot loops free of calls. Any other list or keyed lookup uses `item(list, index)` or
+  `last(list)` from `src/item.ts`, which throw on a miss.
+- Every cache drops its oldest entries with `trimOldest` (`src/bounded.ts`); a 2D canvas comes
+  from `context2d` (`src/canvas.ts`).
+- Shader uniforms the code sets each frame are typed objects the module keeps and assigns into
+  the material (as `src/ocean.ts` and `src/sky.ts` do), never `material.uniforms['x'].value`.
+- Every material draws scene light; the output applies three's ACES curve once, after the bloom
+  and grade (`src/finish.ts`). A material authored in display colours ends its shader with
+  `DRAW_AS_AUTHORED_GLSL` or goes through `drawAsAuthored` (`src/tone.ts`), never
+  `toneMapped: false`; `tests/tone.test.ts` checks. CPU colours convert with `radianceFor`.
+- A material without its own `envMap` reflects `scene.environment` at `scene.environmentIntensity`;
+  its `envMapIntensity` does nothing, so do not set it. Hold a reflection down with roughness or
+  `specularIntensity` (as the whale does).
+
 ## Seeded determinism
 
 - Everything a visitor sees is a pure function of the seed, and for streamed parts of the seed
@@ -49,6 +69,10 @@ structure.
 - The finest land tile is 128 m and each coarser level doubles it (`src/chunks.ts`). Cells load
   nearest first, ties broken on coordinates, and unload beyond a wider ring so a boundary never
   thrashes.
+- Tiles of 512 m and more are built by the worker on a grid twice as fine as the tier's, so ridgelines
+  and peaks keep their shape against the sky (`tileCells` in `src/world-tiles.ts`). The main thread builds
+  the tier's own grid (first frame, no worker), which it can afford inside its frame budget. Keep the
+  first fine level on the lattice of the last plain one, so their seam has no step.
 - Streaming spends at most `BUDGET_MS` (2.5 ms) a frame in `src/world.ts`. Tiles ahead are built
   before the view needs them at the top speed (28 m/s), and the view never shows a hole in the
   land inside the haze.

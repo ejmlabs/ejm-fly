@@ -13,7 +13,7 @@ const SNAP = 4;
 /** Sunk a little so it never fights the land mesh along the shallows. */
 const SINK = 0.15;
 
-export type FloorPatchOptions = {
+export interface FloorPatchOptions {
   /** Seafloor height at world X/Z (seafloor.ts keeps it within sight of a diving whale). */
   heightAt: (x: number, z: number) => number;
   cells: number;
@@ -25,15 +25,15 @@ export type FloorPatchOptions = {
   sandDark: THREE.Color;
   rock: THREE.Color;
   caustic: THREE.Color;
-};
+}
 
-export type FloorPatch = {
+export interface FloorPatch {
   mesh: THREE.Mesh;
   /** Fill the height cache around a world position without drawing. */
   prepare: (worldX: number, worldZ: number, origin: FloatingOrigin) => void;
   update: (worldX: number, worldZ: number, origin: FloatingOrigin, visible: boolean) => void;
   dispose: () => void;
-};
+}
 
 /** Height drawn for the seafloor at a sampled ground height (land is flattened; the land mesh covers it). */
 export function visualFloor(height: number): number {
@@ -167,7 +167,7 @@ export function createFloorPatch(options: FloorPatchOptions): FloorPatch {
   function heightCell(gx: number, gz: number, cx: number, cz: number): number {
     const x = Math.min(cx + half, Math.max(cx - half, gx));
     const z = Math.min(cz + half, Math.max(cz - half, gz));
-    return heights[slot(x, z)]!;
+    return heights[slot(x, z)] ?? 0;
   }
 
   function build(cx: number, cz: number): void {
@@ -177,7 +177,7 @@ export function createFloorPatch(options: FloorPatchOptions): FloorPatch {
         const gz = cz - half + iz;
         const v = (iz * M + ix) * 3;
         positions[v] = (ix - half) * step;
-        positions[v + 1] = heights[slot(gx, gz)]!;
+        positions[v + 1] = heights[slot(gx, gz)] ?? 0;
         positions[v + 2] = (iz - half) * step;
         const dx = heightCell(gx + 1, gz, cx, cz) - heightCell(gx - 1, gz, cx, cz);
         const dz = heightCell(gx, gz + 1, cx, cz) - heightCell(gx, gz - 1, cx, cz);

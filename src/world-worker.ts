@@ -36,7 +36,7 @@ scope.onmessage = (event: MessageEvent<WorkerRequest>) => {
       ? [data.positions.buffer, data.normals.buffer, data.colors.buffer, data.detail.buffer, data.index.buffer, ...(data.walkers ? [data.walkers.buffer] : []), ...(data.maps ? [data.maps.color.buffer, data.maps.normal.buffer] : [])]
       : [];
     scope.postMessage({ type: 'tile', key: message.key, data }, transfer);
-  } else if (message.type === 'far') {
+  } else {
     const shelf = farShelf(land, message.size, message.extent, message.cx, message.cz);
     scope.postMessage({ type: 'far', id: message.id, shelf }, [shelf.data.buffer]);
   }

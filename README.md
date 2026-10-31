@@ -9,6 +9,10 @@ analytics, or runtime network requests beyond this site's static files.
 Open it on a phone and leave it beside you. Drag to look around; the camera
 eases back to a slow cinematic drift.
 
+Where the browser can draw multisampled half floats on a GPU, the frame is finished in HDR: antialiased, the sun
+and its glitter on the water bloom, a light film grade, and one tone curve for everything. Other GPUs draw an
+antialiased canvas with the same colours and no bloom or grade; CPU renderers such as software GL draw a plain one.
+
 Each `?seed=` value rebuilds the same sea: where the day begins, the whale's route and
 behaviour, the regions it crosses, ship placement, and the coasts, islets and mountains. Sound is optional and off by default.
 
@@ -32,12 +36,14 @@ Open `?seed=42` for that sea. Seeds are decimal integers from `0` to
 
 ## Run locally
 
-Use a current Node.js release. Dependencies are locked in `package-lock.json`. For day-to-day work, `npm run dev` starts the
+Use Node.js 24 (`package.json` `engines`; `.npmrc` makes npm refuse another). Dependencies are pinned and locked in `package-lock.json`. For day-to-day work, `npm run dev` starts the
 Vite development server on <http://127.0.0.1:8080>. `npm run serve` typechecks,
 runs `vite build`, then previews `dist/` on loopback (choose another port with
 `npm run serve -- 8081`). The browser needs WebGL 2.
 
-`npm run typecheck` runs `tsc --noEmit`. `npm run build` typechecks then
+`npm run typecheck` runs `tsc --noEmit` with `@tsconfig/strictest`. `npm run lint` runs ESLint with no
+warnings allowed: `eslint.strict.mjs` is the shared strict layer synced from ejmlabs/.github (edit it there),
+and `eslint.config.mjs` adds this repository's globals. `npm run build` typechecks then
 produces `dist/` via Vite. `npm test` runs unit tests with Vitest. `npm run
 test:browser` builds then checks desktop and mobile rendering. `npm run shots`
 builds then captures desktop (1440×900) and mobile (390×844 @3x) screenshots
@@ -50,6 +56,9 @@ times what the journey's feel adds per frame in Node; `npx tsx tools/feel-shots.
 the regions, times of day, weather and indicator, `npx tsx tools/land-shots.ts <dir>` the land by day,
 dusk and night, the highest range in sight, and a close coast with a town and a herd, and
 `npx tsx tools/world-shots.ts <dir>` the open ocean, a continent's coast and an archipelago along the migration (after a build).
+`npx tsx tools/haze-measure.ts [seed]` (after a build) reads the sky's colour at each haze angle straight away from the
+sun for every time of day, in the plain frame, and prints the `haze` arrays for `src/sky.ts` beside the current ones;
+run it whenever a sky preset or the sky shader changes.
 
 There is no byte cap: load time is the size bar. `npx tsx tools/load-time.ts <base dist> <new dist>` times
 first paint, first contentful paint and the first frame of the sea (the page's `calm-first-frame` mark) over
@@ -57,9 +66,12 @@ cold loads, gzipped, on a throttled normal connection (9 Mbps, 170 ms; phones al
 in a fresh browser and alternating between the builds, and fails if the new build adds a second or more.
 
 Review hooks (`window.__calmReview`) are available only with `?debug=1`, among them
-`setDay`, `setWeather` (clear, hazy, overcast, rain, storm, fog), `setSea`
+`setDay` (which also brings the reflections up to the new sky on medium and high), `setWeather` (clear, hazy, overcast, rain, storm, fog), `setSea`
 (0 glassy to 1 rough, or null to follow the weather), `setRoute`, `jumpTo`, `life` (towns and herds nearby),
-`peak` (the highest land in a ring) and `view` (a fixed review camera).
+`peak` (the highest land in a ring) and `view` (a fixed review camera). `stats()` reports `frame` (`finish`,
+`multisampled` or `plain`) with the frame's draws, triangles and stream counts. `?debug=1&frame=finish` (or
+`multisampled`, `plain`) asks for a frame wherever the browser can draw it; the shot tools ask for the finish so
+their pictures show the GPU look on a CPU renderer.
 
 ## Static deployment
 

@@ -7,14 +7,14 @@
  * 3000–6000 m (Britannica, "continental shelf"; NOAA Ocean Explorer).
  */
 
-export type ShelfProfile = {
+export interface ShelfProfile {
   /** Metres from the coast to the shelf break. */
   width: number;
   /** Depth at the shelf break, metres. */
   breakDepth: number;
   /** Slope below the break, degrees. */
   slope: number;
-};
+}
 
 /**
  * Continental margins: the steep coasts of this world have active margins, like western South America or Japan,

@@ -1,4 +1,5 @@
-import { BoxGeometry, BufferGeometry, ConeGeometry, CylinderGeometry, ExtrudeGeometry, Float32BufferAttribute, IcosahedronGeometry, Matrix4, Quaternion, Shape, Vector3 } from 'three';
+import type { BufferGeometry } from 'three';
+import { BoxGeometry, ConeGeometry, CylinderGeometry, ExtrudeGeometry, Float32BufferAttribute, IcosahedronGeometry, Matrix4, Quaternion, Shape, Vector3 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /**
@@ -10,7 +11,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export type Rgb = readonly [number, number, number];
 
-export type Part = {
+export interface Part {
   /** Colour at the top of the part, and (optionally) at its foot. */
   color: Rgb;
   foot?: Rgb;
@@ -22,7 +23,7 @@ export type Part = {
   stretch?: readonly [number, number, number];
   /** Vertex tag for the walkers' moving parts. */
   tag?: number;
-};
+}
 
 const up = new Vector3(0, 1, 0);
 const matrix = new Matrix4();
@@ -38,12 +39,14 @@ export function part(geometry: BufferGeometry, { color, foot = color, at = [0, 0
   flat.applyMatrix4(matrix.compose(offset.set(...at), quaternion.setFromAxisAngle(up, turn), scale.set(...stretch)));
   flat.computeVertexNormals();
   flat.computeBoundingBox();
-  const { min, max } = flat.boundingBox!;
+  const box = flat.boundingBox;
+  if (!box) throw new Error('land object part has no bounds');
+  const { min, max } = box;
   const position = flat.getAttribute('position');
   const colors = new Float32Array(position.count * 3);
   for (let v = 0; v < position.count; v++) {
     const t = max.y > min.y ? (position.getY(v) - min.y) / (max.y - min.y) : 1;
-    for (let c = 0; c < 3; c++) colors[v * 3 + c] = foot[c]! + (color[c]! - foot[c]!) * t;
+    for (let c = 0; c < 3; c++) colors[v * 3 + c] = (foot[c] ?? 0) + ((color[c] ?? 0) - (foot[c] ?? 0)) * t;
   }
   flat.setAttribute('color', new Float32BufferAttribute(colors, 3));
   flat.setAttribute('tag', new Float32BufferAttribute(new Float32Array(position.count).fill(tag), 1));
@@ -52,7 +55,8 @@ export function part(geometry: BufferGeometry, { color, foot = color, at = [0, 0
 
 /** Parts merged into one geometry (position, normal, color, tag; unindexed). */
 export function shape(parts: BufferGeometry[]): BufferGeometry {
-  const merged = mergeGeometries(parts);
+  // three's types promise a geometry; it returns null when the parts' attributes differ.
+  const merged = mergeGeometries(parts) as BufferGeometry | null;
   for (const p of parts) p.dispose();
   if (!merged) throw new Error('land object parts do not match');
   return merged;

@@ -1,7 +1,7 @@
 import { hash } from './rng.js';
 
 /** A bait ball or krill swarm under water. World metres; `y` is the swarm centre (negative, below the surface). */
-export type FeedSite = {
+export interface FeedSite {
   /** Stable for (seed, cell). */
   id: number;
   kind: 'krill' | 'baitball';
@@ -10,7 +10,7 @@ export type FeedSite = {
   z: number;
   /** Swarm radius in metres. */
   radius: number;
-};
+}
 
 /** Sites are seeded per square cell of this size, at most one per cell. */
 export const FEED_CELL = 600;

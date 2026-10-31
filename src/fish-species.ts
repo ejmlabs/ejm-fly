@@ -1,7 +1,7 @@
 /** How a species is built and how it swims: a fish beats its tail, a ray flaps its wings, a jellyfish pulses its bell. */
 export type FishShape = 'fish' | 'ray' | 'jelly';
 
-export type FishSpecies = {
+export interface FishSpecies {
   name: 'sardine' | 'mackerel' | 'tuna' | 'lanternfish' | 'jellyfish' | 'ray' | 'reef';
   shape: FishShape;
   /** Body length (m); a ray's disc width, a jellyfish's bell width. Meshes are built at unit length. */
@@ -24,7 +24,7 @@ export type FishSpecies = {
   /** Light of its own (0..1), drawn in `glowColor`. */
   glow: number;
   glowColor: number;
-};
+}
 
 /**
  * Tail-beat rates follow Bainbridge (1958), speed ≈ 0.75 × length × beat, at a

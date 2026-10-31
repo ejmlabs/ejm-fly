@@ -1,5 +1,5 @@
 /** Critically damped spring: position and velocity, stepped in closed form. */
-export type Spring = { x: number; v: number };
+export interface Spring { x: number; v: number }
 
 export const createSpring = (x = 0): Spring => ({ x, v: 0 });
 

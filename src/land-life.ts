@@ -3,6 +3,7 @@ import { hash } from './rng.js';
 import { smoothstep } from './math.js';
 import type { Land } from './land.js';
 import type { RegionWeights } from './regions.js';
+import { item } from './item.js';
 
 /**
  * Where life stands on the land, as a pure function of the seed and the land:
@@ -25,21 +26,21 @@ const TOWN_HOME = 4500;
 export const TREE = { conifer: 0, broadleaf: 1, palm: 2, shrub: 3, boulder: 4 } as const;
 export const WALKER = { person: 0, sheep: 1, cow: 2, deer: 3, reindeer: 4, goat: 5 } as const;
 
-export type House = { x: number; z: number; yaw: number; width: number; depth: number; height: number; wall: number; roof: number; tower: boolean };
+export interface House { x: number; z: number; yaw: number; width: number; depth: number; height: number; wall: number; roof: number; tower: boolean }
 /** A person or an animal: where it stands, the line it paces along (`range` metres each way), and its look. */
-export type Walker = { kind: number; x: number; z: number; yaw: number; range: number; phase: number; tint: number };
-export type Town = { x: number; z: number; region: number; houses: House[]; people: Walker[] };
+export interface Walker { kind: number; x: number; z: number; yaw: number; range: number; phase: number; tint: number }
+export interface Town { x: number; z: number; region: number; houses: House[]; people: Walker[] }
 
-export type Biome = {
+export interface Biome {
   /** Highest trees, in metres. */
   treeline: number;
   /** Base forest cover, 0 to 1. */
   cover: number;
   tropical: number;
   polar: number;
-};
+}
 
-export type LandLife = {
+export interface LandLife {
   seed: number;
   biome: (weights: RegionWeights) => Biome;
   /** Forest cover in [0, 1] at a point of the drawn surface (height in metres, `slopeY` the normal's Y, `cliff` the land's cliff face weight). */
@@ -48,7 +49,7 @@ export type LandLife = {
   town: (ci: number, cj: number) => Town | null;
   /** The herd of a herd cell (empty when none). */
   herd: (hi: number, hj: number) => Walker[];
-};
+}
 
 /** Unit value per lattice point, cheaper than `hash` for the tile loops. */
 export function latticeUnit(seed: number, salt: number, i: number, j: number): number {
@@ -97,8 +98,9 @@ export function createLandLife(land: LifeLand): LandLife {
   }
 
   function town(ci: number, cj: number): Town | null {
-    const key = `${ci},${cj}`;
-    if (towns.has(key)) return towns.get(key)!;
+    const key = `${String(ci)},${String(cj)}`;
+    const known = towns.get(key);
+    if (known !== undefined) return known;
     const built = buildTown(ci, cj);
     if (towns.size > 512) towns.clear();
     towns.set(key, built);
@@ -144,8 +146,8 @@ export function createLandLife(land: LifeLand): LandLife {
     const bx = Math.cos(seaward);
     const bz = Math.sin(seaward);
     const houses: House[] = [];
-    const walls = WALLS[region]!;
-    const roofs = ROOFS[region]!;
+    const walls = item(WALLS, region);
+    const roofs = item(ROOFS, region);
     for (let n = 0; houses.length < wanted && n < wanted * 3; n++) {
       const slot = Math.floor(n / 2);
       const side = n % 2 ? 1 : -1;
@@ -167,8 +169,8 @@ export function createLandLife(land: LifeLand): LandLife {
         width: tower ? 4.5 : 5 + r(80 + n) * 2.5,
         depth: tower ? 4.5 : 6 + r(90 + n) * 2.5,
         height: tower ? 11 + r(95) * 5 : 3.4 + r(100 + n) * 1.8,
-        wall: walls[Math.floor(r(110 + n) * walls.length)]!,
-        roof: roofs[Math.floor(r(120 + n) * roofs.length)]!,
+        wall: walls[Math.floor(r(110 + n) * walls.length)] ?? 0,
+        roof: roofs[Math.floor(r(120 + n) * roofs.length)] ?? 0,
         tower,
       });
     }
@@ -176,7 +178,7 @@ export function createLandLife(land: LifeLand): LandLife {
     const people: Walker[] = [];
     const crowd = Math.min(14, Math.round(houses.length * 0.9));
     for (let n = 0; n < crowd; n++) {
-      const home = houses[Math.floor(r(200 + n) * houses.length)]!;
+      const home = item(houses, Math.floor(r(200 + n) * houses.length));
       // Out on the street in front of a house, pacing along it; a few stand chatting.
       const t = (home.x - x) * ax + (home.z - z) * az + (r(220 + n) - 0.5) * 6;
       const px = x + ax * t + bx * (r(230 + n) - 0.5) * 6;
@@ -189,7 +191,7 @@ export function createLandLife(land: LifeLand): LandLife {
   }
 
   function herd(hi: number, hj: number): Walker[] {
-    const key = `${hi},${hj}`;
+    const key = `${String(hi)},${String(hj)}`;
     const known = herds.get(key);
     if (known) return known;
     const built = buildHerd(hi, hj);
@@ -221,7 +223,7 @@ export function createLandLife(land: LifeLand): LandLife {
         if (t && Math.hypot(t.x - x, t.z - z) < 900) farm = true;
       }
     }
-    const kind = farm ? (r(3) < 0.65 ? WALKER.sheep : WALKER.cow) : [WALKER.deer, WALKER.goat, WALKER.reindeer, WALKER.goat][region]!;
+    const kind = farm ? (r(3) < 0.65 ? WALKER.sheep : WALKER.cow) : item([WALKER.deer, WALKER.goat, WALKER.reindeer, WALKER.goat], region);
     const out: Walker[] = [];
     const count = 3 + Math.floor(r(4) * 6);
     const heading = r(5) * Math.PI * 2;

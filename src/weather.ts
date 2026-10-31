@@ -1,11 +1,12 @@
 import { hash } from './rng.js';
 import { clamp, lerp, smoothstep } from './math.js';
 import type { RegionWeights } from './regions.js';
+import { item } from './item.js';
 
 export type WeatherState = 'clear' | 'hazy' | 'overcast' | 'rain' | 'storm' | 'fog';
 
 /** What a weather state sets, as multipliers or fractions of the sky's own values. */
-export type WeatherLook = {
+export interface WeatherLook {
   /** Cloud cover and density, as absolute values for the sky shader. */
   coverage: number;
   density: number;
@@ -26,7 +27,7 @@ export type WeatherLook = {
   sea: number;
   /** Lightning now, 0 to 1. */
   flash: number;
-};
+}
 
 export const WEATHER: Record<WeatherState, WeatherLook> = {
   clear: { coverage: 0.17, density: 0.15, fog: 1, haze: 1, sun: 1, grey: 0, rain: 0, wind: 0.12, dark: 0, sea: 0, flash: 0 },
@@ -75,7 +76,7 @@ function ease(t: number): number {
 }
 
 /** The seeded tracks of a seed: the ladder walk, fog banks and distant swell, each a pure function of the clock. */
-export type WeatherTrack = {
+export interface WeatherTrack {
   span: number;
   /** Ladder position, 0 (clear) to 1 (storm), before the region's bias. */
   ladder: (clock: number) => number;
@@ -83,7 +84,7 @@ export type WeatherTrack = {
   bank: (clock: number) => number;
   /** Sea level of a swell from distant weather, 0 to about 0.45. */
   swell: (clock: number) => number;
-};
+}
 
 export function weatherTrack(seed: number): WeatherTrack {
   const span = weatherSpan(seed);
@@ -92,13 +93,13 @@ export function weatherTrack(seed: number): WeatherTrack {
   const rung = (k: number): number => {
     while (rungs.length <= k) {
       const at = rungs.length;
-      const last = rungs[at - 1]!;
+      const last = rungs[at - 1] ?? 0;
       const roll = unit(seed, 5003, at);
       const up = last === 0 ? UP + 0.07 : UP;
       const down = last === LADDER.length - 1 ? DOWN + 0.18 : DOWN;
       rungs.push(roll < up ? Math.min(LADDER.length - 1, last + 1) : roll < up + down ? Math.max(0, last - 1) : last);
     }
-    return rungs[k]!;
+    return rungs[k] ?? 0;
   };
   const sampled = (clock: number, length: number, knot: (k: number) => number): number => {
     const at = Math.max(0, clock) / length;
@@ -117,14 +118,14 @@ export function weatherTrack(seed: number): WeatherTrack {
 export function severityAt(track: WeatherTrack, clock: number, weights: RegionWeights): number {
   const s = track.ladder(clock);
   let bias = 0;
-  for (let r = 0; r < 4; r++) bias += weights[r]! * BIAS[r]!;
+  for (let r = 0; r < 4; r++) bias += (weights[r] ?? 0) * (BIAS[r] ?? 0);
   return clamp(s + bias * smoothstep(0, 0.25, s), 0, 1);
 }
 
 /** Fog bank strength now: the region's odds, and gone when the wind gets up. */
 export function fogAt(track: WeatherTrack, clock: number, weights: RegionWeights, severity: number): number {
   let odds = 0;
-  for (let r = 0; r < 4; r++) odds += weights[r]! * FOG_ODDS[r]!;
+  for (let r = 0; r < 4; r++) odds += (weights[r] ?? 0) * (FOG_ODDS[r] ?? 0);
   return track.bank(clock) * odds * (1 - smoothstep(0.35, 0.65, severity));
 }
 
@@ -148,8 +149,8 @@ export function flashAt(seed: number, clock: number, storm: number): number {
 function ladderLook(severity: number, clearCover: number, out: WeatherLook): WeatherLook {
   const at = clamp(severity, 0, 1) * (LADDER.length - 1);
   const i = Math.min(LADDER.length - 2, Math.floor(at));
-  const a = WEATHER[LADDER[i]!];
-  const b = WEATHER[LADDER[i + 1]!];
+  const a = WEATHER[item(LADDER, i)];
+  const b = WEATHER[item(LADDER, i + 1)];
   const t = at - i;
   for (const key of KEYS) out[key] = lerp(a[key], b[key], t);
   // The seed's own clear-sky cover stands in for the clear state.
@@ -157,7 +158,7 @@ function ladderLook(severity: number, clearCover: number, out: WeatherLook): Wea
   return out;
 }
 
-export type Weather = {
+export interface Weather {
   /** The look right now; moved by `update`. */
   readonly look: WeatherLook;
   /** The state that shows most right now. */
@@ -168,7 +169,7 @@ export type Weather = {
   set: (state: WeatherState) => void;
   /** Hold the sea at a level, or null to let it follow the weather again (review shots). */
   setSea: (level: number | null) => void;
-};
+}
 
 /**
  * Weather on a seeded walk up and down the ladder clear, hazy, overcast, rain, storm, a rung per knot, held for minutes
@@ -195,7 +196,7 @@ export function createWeather(seed: number, cover = WEATHER.clear.coverage): Wea
     look,
     target() {
       if (forced) return forced;
-      return fog > 0.5 ? 'fog' : LADDER[Math.round(severity * (LADDER.length - 1))]!;
+      return fog > 0.5 ? 'fog' : item(LADDER, Math.round(severity * (LADDER.length - 1)));
     },
     update(dt, clock, weights, flashes = true) {
       if (forced === null) {

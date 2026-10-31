@@ -7,11 +7,14 @@ import { buildTile, tileSize, TOP_LEVEL, SINK, type ShadingMaps, type TileData }
 import { createLandLife, type LandLife } from './land-life.js';
 import type { WorkerRequest } from './world-worker.js';
 import { underwaterUniforms, UNDERWATER_GLSL_PARS } from './seams.js';
+import { item } from './item.js';
+import { trimOldest } from './bounded.js';
+import { DRAW_AS_AUTHORED_GLSL, SCENE_FROM_DISPLAY_GLSL, displayExposure } from './tone.js';
 
 export { biomeColor } from './world-tiles.js';
 
-export type LandStreamOptions = {
-  /** Old clipmap ring segments; tiles get a quarter of that per side. */
+export interface LandStreamOptions {
+  /** Old clipmap ring segments; tiles get 3/16 of that per side, and the worker's coarse tiles twice as many (`tileCells`). */
   segments: number;
   sunDirection: THREE.Vector3;
   /** Sky colour at the horizon; distance haze blends land into it. */
@@ -21,17 +24,24 @@ export type LandStreamOptions = {
   /** Sky colours by elevation angle; when set, haze matches the sky behind each point. */
   hazeGradient?: { angles: number[]; colors: THREE.Color[] };
   /** Build tiles in a worker (browser only); falls back to time-sliced main-thread builds. */
-  worker?: boolean;
+  worker?: boolean | undefined;
   /** Trees, rocks and houses a tile may carry (0 for bare land). */
   objects?: number;
   /** Fine bump detail: none, near the camera, or out to the middle distance. */
   microNormal?: 'off' | 'near' | 'full';
-};
+  /**
+   * How a fading tile dissolves: by sample coverage on a multisampled target (a true cross-fade), or by a fine
+   * screen-space dither where there is no multisampling.
+   */
+  dissolve?: Dissolve | undefined;
+}
+
+export type Dissolve = 'coverage' | 'dither';
 
 /** A placed, wanted tile with people or animals on it. */
-export type WalkerTile = { x0: number; z0: number; level: number; data: Float32Array };
+export interface WalkerTile { x0: number; z0: number; level: number; data: Float32Array }
 
-export type LandStream = {
+export interface LandStream {
   /** Holds tiles at world positions: add it under the world root. */
   group: THREE.Group;
   /**
@@ -48,8 +58,11 @@ export type LandStream = {
   tileState: (key: string) => 'in' | 'on' | 'out' | undefined;
   /** The land's look in a region: haze density scaled, vertex colours multiplied. */
   setLook: (hazeDensity: number, tint: THREE.Color) => void;
-  /** The light of the day: sun direction, haze colours (as many as at creation), base haze density and brightness (0 dark to 1 day). */
-  setSky: (sun: THREE.Vector3, haze: readonly THREE.Color[], density: number, light: number) => void;
+  /**
+   * The light of the day: sun direction and colour (its hue tints the lit slopes), haze colours (as many as at
+   * creation), base haze density and brightness (0 dark to 1 day).
+   */
+  setSky: (sun: THREE.Vector3, sunColor: THREE.Color, haze: readonly THREE.Color[], density: number, light: number) => void;
   /** World X/Z of render (0, 0), so surface detail stays fixed to the ground across recentres. */
   setOrigin: (x: number, z: number) => void;
   /** Uniforms of the land's lighting and haze, for what stands on the land (see `landShadingGLSL`). */
@@ -76,8 +89,12 @@ export type LandStream = {
     completed: number;
   };
   dispose: () => void;
-};
+}
 
+/** Sunlight on the land at a clear noon (sRGB), and its brightness: a low sun keeps that and takes its own hue. */
+const SUN_TINT = 0xfff0d8;
+const luma = (c: THREE.Color) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+const SUN_TINT_LUMA = luma(new THREE.Color().setHex(SUN_TINT, THREE.SRGBColorSpace));
 /** Eye height the haze gradient is measured from (the camera rides just above the sea). */
 const EYE = 4;
 /** Default haze density (per metre); land a few kilometres out melts into the sky. */
@@ -160,13 +177,14 @@ uniform vec3 sunTint;
 uniform float hazeDensity;
 uniform vec3 landTint;
 uniform float landLight;
-uniform float hazeAngles[${stops}];
-uniform vec3 hazeColors[${stops}];
+uniform float hazeAngles[${String(stops)}];
+uniform vec3 hazeColors[${String(stops)}];
 ${UNDERWATER_GLSL_PARS}
+${SCENE_FROM_DISPLAY_GLSL}
 
 vec3 hazeAt( float deg ) {
   vec3 color = hazeColors[0];
-  for ( int i = 1; i < ${stops}; i++ ) {
+  for ( int i = 1; i < ${String(stops)}; i++ ) {
     float t = clamp( ( deg - hazeAngles[i - 1] ) / max( 1e-3, hazeAngles[i] - hazeAngles[i - 1] ), 0.0, 1.0 );
     color = mix( color, hazeColors[i], t );
   }
@@ -175,14 +193,18 @@ vec3 hazeAt( float deg ) {
 
 vec3 landShade( vec3 albedo, vec3 n, vec3 world ) {
   float lambert = max( 0.0, dot( n, sunDirection ) );
-  float sky = 0.36 + 0.16 * n.y;
+  // The sun models the land: a stronger key than the sky's fill, so slopes away from it fall into shade.
+  float sky = 0.3 + 0.14 * n.y;
+  // Shade takes the sky's own hue (blue by day, warm at sunset, moonlit at night) at the same brightness.
+  vec3 zenith = hazeColors[${String(stops - 1)}];
+  vec3 skyHue = min( zenith / max( 1e-4, dot( zenith, vec3( 0.2126, 0.7152, 0.0722 ) ) ), vec3( 1.6 ) );
   float h = world.y + ${SINK.toFixed(2)};
   float d = length( world.xz - cameraPosition.xz );
   // Far ranges read as solid masses: facet-to-facet light differences fade with distance.
   float distant = 0.25 * smoothstep( 2000.0, 5500.0, d );
   lambert = mix( lambert, 0.45 * max( 0.0, sunDirection.y ) + 0.25, distant );
   sky = mix( sky, 0.5, distant );
-  vec3 lit = albedo * landTint * landLight * ( sky + lambert * 0.78 * sunTint );
+  vec3 lit = albedo * landTint * landLight * ( sky * mix( vec3( 1.0 ), skyHue, 0.3 ) + lambert * 0.92 * sunTint );
   // Air thins with altitude: high ridges and snowfields stay solid through the haze.
   float dh = d * mix( 1.0, 0.62, smoothstep( 150.0, 900.0, h ) );
   // Thin enough that ranges a few kilometres out keep their spurs and gullies.
@@ -204,9 +226,9 @@ const BUMP_REACH = { off: 0, near: 700, full: 1600 } as const;
  * costs no triangles (rock strata and grain, wet rock and sand at the
  * waterline, mottled grass, forest canopy, sand ripples, and a fine bump
  * normal), all faded out with distance. Objects baked into the tiles skip the
- * detail. Fading tiles dissolve with a screen-space dither (opaque, no sorting).
+ * detail. Fading tiles dissolve by coverage or a screen-space dither (opaque either way, no sorting).
  */
-function fragmentShader(stops: number, dither: boolean, bump: number): string {
+function fragmentShader(stops: number, fading: Dissolve | null, bump: number): string {
   return /* glsl */ `
 uniform float fade;
 uniform vec2 origin;
@@ -248,7 +270,7 @@ float tri( vec3 p, vec3 w, float period ) {
 
 void main() {
   ${
-    dither
+    fading === 'dither'
       ? `// Interleaved gradient noise: an even, fine dissolve.
   float grain = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
   if ( grain >= fade ) discard;`
@@ -297,7 +319,7 @@ void main() {
     float bedding = ( sin( ( p.y + warp * 0.4 ) * 3.7 ) * 0.5 ) * shows( 1.7 );
     float grit = ( tri( p, w, 1.7 ) - 0.5 ) * shows( 1.7 );
     float blocks = ( tri( p, w, 5.0 ) - 0.5 ) * shows( 5.0 );
-    vec3 bands = mix( vec3( 0.88, 0.87, 0.85 ), vec3( 1.08, 1.03, 0.95 ), strata );
+    vec3 bands = mix( vec3( 0.93, 0.92, 0.9 ), vec3( 1.04, 1.02, 0.97 ), strata );
     albedo = mix( albedo, albedo * bands * ( 1.0 + 0.12 * bedding + 0.26 * grit + 0.18 * blocks ), rock * near );
     // Wet rock and sand along the waterline, ragged at its top.
     float wet = 1.0 - smoothstep( 0.2, 1.4 + 1.2 * vnoise( p.xz / 6.0 ), h );
@@ -339,12 +361,13 @@ void main() {
   }`
       : ''
   }
-  gl_FragColor = vec4( landShade( albedo, n, vWorld ), 1.0 );
-  #include <colorspace_fragment>
+  // With coverage, alpha is the share of each pixel's samples the tile covers.
+  gl_FragColor = vec4( landShade( albedo, n, vWorld ), ${fading === 'coverage' ? 'fade' : '1.0'} );
+  ${DRAW_AS_AUTHORED_GLSL}
 }`;
 }
 
-type Tile = {
+interface Tile {
   key: string;
   level: number;
   ix: number;
@@ -365,7 +388,7 @@ type Tile = {
   /** Seconds this tile's dissolve takes. */
   fadeTime: number;
   state: 'in' | 'on' | 'out';
-};
+}
 
 /**
  * Picks the tiles to draw around (x, z): a quadtree from TOP_LEVEL down, where a
@@ -384,7 +407,7 @@ export function selectTiles(
   ax = 0,
   az = 0,
 ): string[] {
-  const out: Array<{ key: string; d: number; level: number }> = [];
+  const out: { key: string; d: number; level: number }[] = [];
   const top = tileSize(TOP_LEVEL);
   // Samples along the segment, at most 16 m apart (a cell's distance is convex along it).
   const samples = Math.ceil(Math.hypot(ax, az) / 16);
@@ -414,7 +437,7 @@ export function selectTiles(
   return out.map((t) => t.key);
 }
 
-type Cell = { level: number; ix: number; iz: number };
+interface Cell { level: number; ix: number; iz: number }
 
 function overlaps(a: Cell, b: Cell): boolean {
   const sa = tileSize(a.level);
@@ -430,7 +453,7 @@ function overlaps(a: Cell, b: Cell): boolean {
 export function createLandStream(land: Land, options: LandStreamOptions): LandStream {
   const cells = Math.max(8, Math.round((options.segments * 3) / 16));
   const sun = options.sunDirection.clone().normalize();
-  const sunTint = new THREE.Color().setHex(0xfff0d8, THREE.SRGBColorSpace);
+  const sunTint = new THREE.Color().setHex(SUN_TINT, THREE.SRGBColorSpace);
   const patchNoise = makeNoise2D(land.seed, 21);
   const objects = options.objects ?? 0;
   // Main-thread builds after the first frame (no worker) place life from their own copy of the rules, made when first needed.
@@ -453,20 +476,21 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
     colorMap: { value: null as THREE.Texture | null },
     normalMap: { value: null as THREE.Texture | null },
     mapScale: { value: 0 },
+    displayExposure,
     ...underwaterUniforms,
   };
   const bump = BUMP_REACH[options.microNormal ?? 'off'];
-  const makeMaterial = (dither: boolean) =>
+  const makeMaterial = (fading: Dissolve | null) =>
     new THREE.ShaderMaterial({
       vertexShader,
-      fragmentShader: fragmentShader(gradient.angles.length, dither, bump),
+      fragmentShader: fragmentShader(gradient.angles.length, fading, bump),
       uniforms,
       vertexColors: true,
       fog: false,
-      toneMapped: false,
+      alphaToCoverage: fading === 'coverage',
     });
-  const solid = makeMaterial(false);
-  const dissolving = makeMaterial(true);
+  const solid = makeMaterial(null);
+  const dissolving = makeMaterial(options.dissolve ?? 'dither');
 
   const group = new THREE.Group();
   group.name = 'land';
@@ -478,7 +502,7 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
   let bare: string[] = [];
   let wanted = new Set<string>();
   let wantedList: string[] = [];
-  let wantedCells: Array<{ key: string; level: number; ix: number; iz: number }> = [];
+  let wantedCells: { key: string; level: number; ix: number; iz: number }[] = [];
   let split = new Set<string>();
   let lastX = Infinity;
   let lastZ = Infinity;
@@ -486,7 +510,7 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
   let lastAZ = 0;
   let queue: string[] = [];
   /** Built tiles waiting to be placed (paced), and tiles built ahead of need. */
-  const arrived: Array<{ key: string; data: TileData | null }> = [];
+  const arrived: { key: string; data: TileData | null }[] = [];
   const ready = new Map<string, TileData | null>();
   let completed = 0;
   let holes = 0;
@@ -524,7 +548,8 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
   function request(key: string): void {
     const { lod, cx, cz } = parseChunkKey(key);
     const message: WorkerRequest = { type: 'tile', key, level: lod, ix: cx, iz: cz, cells, objects, maps: true };
-    worker!.postMessage(message);
+    if (!worker) throw new Error('land tiles requested without a worker');
+    worker.postMessage(message);
     requested.add(key);
     inFlight++;
   }
@@ -534,12 +559,14 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
    * room; without a worker, one tile per call on the main thread.
    */
   function send(): void {
-    while (queue.length && (worker ? inFlight < MAX_IN_FLIGHT : true)) {
-      const key = queue.shift()!;
+    while (queue.length && (!worker || inFlight < MAX_IN_FLIGHT)) {
+      const key = queue.shift();
+      if (key === undefined) break;
       if (tiles.has(key) || requested.has(key)) continue;
-      if (ready.has(key)) {
+      const done = ready.get(key);
+      if (done !== undefined) {
         if (wanted.has(key)) {
-          arrived.push({ key, data: ready.get(key)! });
+          arrived.push({ key, data: done });
           ready.delete(key);
         }
         continue;
@@ -552,7 +579,8 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
       }
     }
     while (worker && inFlight < MAX_IN_FLIGHT && bare.length) {
-      const key = bare.shift()!;
+      const key = bare.shift();
+      if (key === undefined) break;
       // A bare tile no longer wanted is on its way out: it needs no full build.
       if (tiles.get(key)?.bare && wanted.has(key) && !requested.has(key)) request(key);
     }
@@ -567,7 +595,7 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
     }
     ready.delete(key);
     ready.set(key, data);
-    while (ready.size > READY_CAP) ready.delete(ready.keys().next().value!);
+    trimOldest(ready, READY_CAP);
   }
 
   /** A tile's mesh: its shading maps bound for its own draws, its dissolve from the tile. */
@@ -587,7 +615,7 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
     const maps = data.maps ? [mapTexture(data.maps, data.maps.color, THREE.SRGBColorSpace), mapTexture(data.maps, data.maps.normal, THREE.NoColorSpace)] : null;
     if (maps) mesh.userData['maps'] = maps;
     mesh.onBeforeRender = () => {
-      const material = mesh.material as THREE.ShaderMaterial;
+      const material = mesh.material;
       // Uniforms go up again only when this draw's differ from the last land draw's.
       if (material !== dissolving && maps?.[0] === bound) return;
       bound = maps?.[0];
@@ -649,11 +677,11 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
     walkerVersion++;
   }
 
-  /** A tile built on the main thread: bare, or with its life (no shading maps: they are worker work). */
+  /** A tile built on the main thread: bare, or with its life; on the tier's own grid and without shading maps, which are worker work. */
   function buildHere(key: string, full: boolean): TileData | null {
     const { lod, cx, cz } = parseChunkKey(key);
     if (full && objects > 0) life ??= createLandLife(land);
-    return buildTile(land, patchNoise, lod, cx, cz, cells, full && life ? { life, objects } : undefined);
+    return buildTile(land, patchNoise, lod, cx, cz, cells, full && life ? { life, objects } : undefined, false, false);
   }
 
   function remove(tile: Tile): void {
@@ -717,7 +745,7 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
     for (const cell of wantedCells) {
       if (!overlaps(tile, cell)) continue;
       const other = tiles.get(cell.key);
-      if (!other || other.state !== 'on') return false;
+      if (other?.state !== 'on') return false;
     }
     return true;
   }
@@ -738,7 +766,9 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
       }
       send();
       for (let placed = 0, upgraded = 0; arrived.length && placed < PLACE_PER_FRAME && upgraded < UPGRADE_PER_FRAME; ) {
-        const { key, data } = arrived.shift()!;
+        const next = arrived.shift();
+        if (!next) break;
+        const { key, data } = next;
         const tile = tiles.get(key);
         if (tile?.bare) {
           upgrade(tile, data);
@@ -792,9 +822,11 @@ export function createLandStream(land: Land, options: LandStreamOptions): LandSt
       uniforms.hazeDensity.value = baseDensity * look;
       uniforms.landTint.value.copy(tint);
     },
-    setSky(direction, haze, density, light) {
+    setSky(direction, sunColor, haze, density, light) {
       sun.copy(direction).normalize();
-      for (let k = 0; k < uniforms.hazeColors.value.length; k++) uniforms.hazeColors.value[k]!.copy(haze[Math.min(k, haze.length - 1)]!);
+      // The sun's hue at the tint's own brightness: low suns light the slopes gold.
+      sunTint.copy(sunColor).multiplyScalar(SUN_TINT_LUMA / Math.max(1e-4, luma(sunColor)));
+      for (let k = 0; k < uniforms.hazeColors.value.length; k++) item(uniforms.hazeColors.value, k).copy(item(haze, Math.min(k, haze.length - 1)));
       baseDensity = density;
       uniforms.hazeDensity.value = baseDensity * look;
       uniforms.landLight.value = light;

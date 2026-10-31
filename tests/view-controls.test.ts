@@ -1,4 +1,4 @@
-import { test } from 'vitest';
+import { test, expect } from 'vitest';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { EYE_CLEARANCE, FollowCamera } from '../src/camera.js';
@@ -43,7 +43,8 @@ function setup() {
 
 test('pace choices: normal is the current speed, fast tops out at 1.5 times', () => {
   assert.equal(PACES.normal, 1);
-  assert.ok(PACES.slow < 1 && PACES.fast <= 1.5);
+  expect(PACES.slow).toBeLessThan(1);
+  expect(PACES.fast).toBeLessThanOrEqual(1.5);
   assert.ok(isPace('fast') && !isPace('warp') && !isPace('toString') && !isPace(2));
   assert.ok(validateMemory({ version: VERSION, seed: 1, pace: 'slow' }));
   assert.ok(!validateMemory({ version: VERSION, seed: 1, pace: 'warp' }));
@@ -71,10 +72,10 @@ test('pace scales the cruising speed and the whale still breathes', () => {
   const slow = mean(PACES.slow);
   const normal = mean(PACES.normal);
   const fast = mean(PACES.fast);
-  assert.ok(slow.speed < normal.speed * 0.75, `slow ${slow.speed} vs ${normal.speed}`);
-  assert.ok(fast.speed > normal.speed * 1.3, `fast ${fast.speed} vs ${normal.speed}`);
-  assert.ok(fast.top < TRAVEL_MAX * PACES.fast + 6, `fast top ${fast.top}`);
-  assert.ok(fast.breaths >= 2 && slow.breaths >= 2, `breaths ${slow.breaths} ${fast.breaths}`);
+  assert.ok(slow.speed < normal.speed * 0.75, `slow ${String(slow.speed)} vs ${String(normal.speed)}`);
+  assert.ok(fast.speed > normal.speed * 1.3, `fast ${String(fast.speed)} vs ${String(normal.speed)}`);
+  assert.ok(fast.top < TRAVEL_MAX * PACES.fast + 6, `fast top ${String(fast.top)}`);
+  assert.ok(fast.breaths >= 2 && slow.breaths >= 2, `breaths ${String(slow.breaths)} ${String(fast.breaths)}`);
 });
 
 test('the follow camera stays the default until the user orbits', () => {
@@ -104,12 +105,12 @@ test('keys orbit a full turn and zoom stays within the limits', () => {
 
   key(canvas, '+', 40);
   run(4);
-  assert.ok(distance() >= ORBIT_DISTANCE[0] - 0.5, `too close ${distance()}`);
-  assert.ok(distance() < ORBIT_DISTANCE[0] * 1.2, `zoomed in ${distance()}`);
+  assert.ok(distance() >= ORBIT_DISTANCE[0] - 0.5, `too close ${String(distance())}`);
+  assert.ok(distance() < ORBIT_DISTANCE[0] * 1.2, `zoomed in ${String(distance())}`);
   key(canvas, '-', 60);
   run(4);
-  assert.ok(distance() <= ORBIT_DISTANCE[1] + 0.5, `too far ${distance()}`);
-  assert.ok(distance() > ORBIT_DISTANCE[1] * 0.9, `zoomed out ${distance()}`);
+  assert.ok(distance() <= ORBIT_DISTANCE[1] + 0.5, `too far ${String(distance())}`);
+  assert.ok(distance() > ORBIT_DISTANCE[1] * 0.9, `zoomed out ${String(distance())}`);
 });
 
 test('the pitch never goes under the water or over the top', () => {
@@ -117,11 +118,11 @@ test('the pitch never goes under the water or over the top', () => {
   run(1);
   key(canvas, 'ArrowDown', 60);
   run(3);
-  assert.ok(camera.position.y >= WATER_LEVEL + EYE_CLEARANCE - 1e-6, `eye ${camera.position.y}`);
+  assert.ok(camera.position.y >= WATER_LEVEL + EYE_CLEARANCE - 1e-6, `eye ${String(camera.position.y)}`);
   key(canvas, 'ArrowUp', 80);
   run(3);
   const flat = Math.hypot(camera.position.x - target.x, camera.position.z - target.z);
-  assert.ok(flat > 1, `over the top ${flat}`);
+  assert.ok(flat > 1, `over the top ${String(flat)}`);
 });
 
 test('after letting go the view keeps its angle to the turning whale', () => {
@@ -137,7 +138,7 @@ test('after letting go the view keeps its angle to the turning whale', () => {
   const before = relative();
   target.heading = 1.2;
   run(12);
-  assert.ok(Math.abs(relative() - before) < 0.1, `${before} → ${relative()}`);
+  assert.ok(Math.abs(relative() - before) < 0.1, `${String(before)} → ${String(relative())}`);
 });
 
 test('reset returns to the follow camera; reduced motion does not drift', () => {

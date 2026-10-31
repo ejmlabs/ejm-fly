@@ -1,20 +1,12 @@
 {
+  "extends": "@tsconfig/strictest/tsconfig.json",
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "strict": true,
-    "noImplicitAny": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "noEmit": true,
-    "skipLibCheck": true,
-    "isolatedModules": true,
-    "resolveJsonModule": true,
-    "types": ["vite/client", "node"],
-    "baseUrl": ".",
-    "noUnusedLocals": false,
-    "noUnusedParameters": false
+    "types": ["node", "vite/client"]
   },
-  "include": ["src/**/*.ts", "tools/**/*.ts", "tests/**/*.ts", "vite.config.ts"],
-  "exclude": ["node_modules", "dist", ".build"]
+  "include": ["src", "tools", "tests", "vite.config.ts"]
 }

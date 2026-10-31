@@ -1,4 +1,4 @@
-export function hash(...values: Array<number | string | boolean>): number {
+export function hash(...values: (number | string | boolean)[]): number {
   let result = 0x811c9dc5;
   for (const value of values) {
     let word = Number(value) | 0;

@@ -3,7 +3,7 @@ import { isPace, type Pace } from './pace.js';
 const find = (...ids: string[]): HTMLElement | null =>
   ids.map((id) => document.getElementById(id)).find(Boolean) ?? null;
 
-export type UIActions = {
+export interface UIActions {
   share: () => string;
   newSeed: () => void;
   sound: () => void;
@@ -15,9 +15,9 @@ export type UIActions = {
   pace: (pace: Pace) => void;
   /** Back to the default follow camera. */
   resetView: () => void;
-};
+}
 
-export type UIController = {
+export interface UIController {
   ready: () => void;
   error: (message: string) => void;
   sync: (state: { seed: number; sound: boolean; route: boolean; dives: boolean; pace: Pace }) => void;
@@ -27,7 +27,7 @@ export type UIController = {
   showRoute: (visible: boolean, text: string) => void;
   announce: (message: string) => void;
   dispose: () => void;
-};
+}
 
 export function createUI(actions: UIActions): UIController {
   const veil = find('veil');
@@ -97,27 +97,25 @@ export function createUI(actions: UIActions): UIController {
     wake();
   };
 
-  listen(aboutBtn, 'click', () => setAbout(!aboutOpen));
-  listen(aboutClose, 'click', () => setAbout(false));
-  listen(shareBtn, 'click', async (event) => {
-    (event as Event).preventDefault();
+  listen(aboutBtn, 'click', () => { setAbout(!aboutOpen); });
+  listen(aboutClose, 'click', () => { setAbout(false); });
+  listen(shareBtn, 'click', (event) => {
+    event.preventDefault();
     const url = actions.share();
-    try {
-      await navigator.clipboard.writeText(url);
-      announce('link copied');
-    } catch {
-      announce(url);
-    }
+    navigator.clipboard.writeText(url).then(
+      () => { announce('link copied'); },
+      () => { announce(url); },
+    );
   });
-  listen(seedBtn, 'click', () => actions.newSeed());
-  listen(soundBtn, 'click', () => actions.sound());
-  listen(routeToggle, 'change', () => actions.route(Boolean(routeToggle?.checked)));
-  listen(diveToggle, 'change', () => actions.dives(Boolean(diveToggle?.checked)));
+  listen(seedBtn, 'click', () => { actions.newSeed(); });
+  listen(soundBtn, 'click', () => { actions.sound(); });
+  listen(routeToggle, 'change', () => { actions.route(Boolean(routeToggle?.checked)); });
+  listen(diveToggle, 'change', () => { actions.dives(Boolean(diveToggle?.checked)); });
   listen(paceChoice, 'change', (event) => {
     const value = (event.target as HTMLInputElement).value;
     if (isPace(value)) actions.pace(value);
   });
-  listen(resetBtn, 'click', () => actions.resetView());
+  listen(resetBtn, 'click', () => { actions.resetView(); });
   listen(document, 'keydown', (event) => {
     const e = event as KeyboardEvent;
     if (e.key === 'Escape' && aboutOpen) setAbout(false);
@@ -128,16 +126,16 @@ export function createUI(actions: UIActions): UIController {
 
   return {
     ready() {
-      document.body.dataset.ready = 'true';
+      document.body.dataset['ready'] = 'true';
       veil?.classList.add('gone');
       setTimeout(() => veil?.setAttribute('hidden', ''), 2000);
-      hud && ((hud as HTMLElement & { inert: boolean }).inert = false);
+      if (hud) hud.inert = false;
     },
     error(message: string) {
       if (veilText) veilText.textContent = message;
       veil?.classList.remove('gone');
       veil?.removeAttribute('hidden');
-      document.body.dataset.ready = 'error';
+      document.body.dataset['ready'] = 'error';
     },
     sync({ seed, sound, route: routeOn, dives, pace }) {
       if (seedLabel) seedLabel.textContent = String(seed >>> 0);

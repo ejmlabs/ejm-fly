@@ -4,6 +4,7 @@ import { layoutWorld } from '../src/terrain.js';
 import { createSeafloor } from '../src/seafloor.js';
 import { createWhaleMover } from '../src/whale-behavior.js';
 import { PLAN_REACH } from '../src/whale-course.js';
+import { item } from '../src/item.js';
 
 /**
  * Top-down map of a seed's world: land from the land mask, the sea tinted by region, the migration lane's
@@ -12,12 +13,12 @@ import { PLAN_REACH } from '../src/whale-course.js';
  * usage: npx tsx tools/world-map.ts <seed> <out.png> [extent km] [pixels] [track minutes]    (defaults: 800 720 0)
  */
 const seed = Number(process.argv[2] ?? 42);
-const out = process.argv[3] ?? `map-${seed}.png`;
+const out = process.argv[3] ?? `map-${String(seed)}.png`;
 const extent = Number(process.argv[4] ?? 800) * 1000;
 const size = Number(process.argv[5] ?? 720);
 const minutes = Number(process.argv[6] ?? 0);
 
-const SEA: Array<[number, number, number]> = [
+const SEA: [number, number, number][] = [
   [44, 96, 128],
   [46, 132, 150],
   [92, 120, 140],
@@ -55,7 +56,7 @@ for (let py = 0; py < size; py++) {
       put(px, py, [LAND[0] + (HIGH[0] - LAND[0]) * t, LAND[1] + (HIGH[1] - LAND[1]) * t, LAND[2] + (HIGH[2] - LAND[2]) * t]);
     } else {
       const w = land.regions.weightsAt(x, z);
-      const sea = [0, 1, 2].map((c) => w.reduce((sum, wk, k) => sum + wk * SEA[k]![c]!, 0)) as [number, number, number];
+      const sea = [0, 1, 2].map((c) => w.reduce((sum, wk, k) => sum + wk * (item(SEA, k)[c] ?? 0), 0)) as [number, number, number];
       const shallow = Math.max(0, 1 + m / 0.6);
       put(px, py, [sea[0] + (SHALLOW[0] - sea[0]) * shallow, sea[1] + (SHALLOW[1] - sea[1]) * shallow, sea[2] + (SHALLOW[2] - sea[2]) * shallow]);
     }
@@ -89,4 +90,4 @@ const home = toPixel(layout.whaleHome.x, layout.whaleHome.z);
 for (let a = 0; a < 64; a++) put(home.px + Math.round(Math.cos((a / 64) * Math.PI * 2) * 6), home.py + Math.round(Math.sin((a / 64) * Math.PI * 2) * 6), [255, 255, 255]);
 
 writeFileSync(out, PNG.sync.write(png));
-console.log(`seed ${seed}: ${(extent / 1000).toFixed(0)} km map, ${(cell).toFixed(0)} m a pixel → ${out}`);
+console.log(`seed ${String(seed)}: ${(extent / 1000).toFixed(0)} km map, ${(cell).toFixed(0)} m a pixel → ${out}`);

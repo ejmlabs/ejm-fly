@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clamp, lerp, smoothstep } from './math.js';
 import { WHALE_LENGTH } from './whale-size.js';
+import { item } from './item.js';
 
 /**
  * Blue whale anatomy in metres, local frame:
@@ -27,14 +28,14 @@ const FLIPPER_SINK = 0.0625 * FLIPPER_LENGTH;
 
 export type WhaleDetail = 'high' | 'medium' | 'low';
 
-export type DetailSpec = {
+export interface DetailSpec {
   rings: number;
   radial: number;
   flipperSpan: number;
   flipperLoop: number;
   flukeSpan: number;
   flukeLoop: number;
-};
+}
 
 export const WHALE_DETAIL: Record<WhaleDetail, DetailSpec> = {
   high: { rings: 300, radial: 96, flipperSpan: 40, flipperLoop: 14, flukeSpan: 56, flukeLoop: 16 },
@@ -43,7 +44,7 @@ export const WHALE_DETAIL: Record<WhaleDetail, DetailSpec> = {
 };
 
 /** Camera distances where each level takes over, per quality tier. */
-export const WHALE_LOD: Record<'high' | 'medium' | 'low', Array<{ detail: WhaleDetail; distance: number }>> = {
+export const WHALE_LOD: Record<'high' | 'medium' | 'low', { detail: WhaleDetail; distance: number }[]> = {
   high: [
     { detail: 'high', distance: 0 },
     { detail: 'medium', distance: 4.6 * L },
@@ -80,30 +81,30 @@ export const BLOWHOLE_X = HEAD_X + BLOWHOLE_U * BODY_LENGTH;
 function curve(xs: number[], ys: number[], x: number): number {
   // Monotone cubic (Fritsch–Carlson) so the outline never overshoots.
   const n = xs.length;
-  if (x <= xs[0]!) return ys[0]!;
-  if (x >= xs[n - 1]!) return ys[n - 1]!;
+  if (x <= (xs[0] ?? 0)) return ys[0] ?? 0;
+  if (x >= (xs[n - 1] ?? 0)) return ys[n - 1] ?? 0;
   let i = 0;
-  while (x > xs[i + 1]!) i++;
+  while (x > (xs[i + 1] ?? 0)) i++;
   const slope = (k: number) => {
-    if (k <= 0) return (ys[1]! - ys[0]!) / (xs[1]! - xs[0]!);
-    if (k >= n - 1) return (ys[n - 1]! - ys[n - 2]!) / (xs[n - 1]! - xs[n - 2]!);
-    const a = (ys[k]! - ys[k - 1]!) / (xs[k]! - xs[k - 1]!);
-    const b = (ys[k + 1]! - ys[k]!) / (xs[k + 1]! - xs[k]!);
+    if (k <= 0) return ((ys[1] ?? 0) - (ys[0] ?? 0)) / ((xs[1] ?? 0) - (xs[0] ?? 0));
+    if (k >= n - 1) return ((ys[n - 1] ?? 0) - (ys[n - 2] ?? 0)) / ((xs[n - 1] ?? 0) - (xs[n - 2] ?? 0));
+    const a = ((ys[k] ?? 0) - (ys[k - 1] ?? 0)) / ((xs[k] ?? 0) - (xs[k - 1] ?? 0));
+    const b = ((ys[k + 1] ?? 0) - (ys[k] ?? 0)) / ((xs[k + 1] ?? 0) - (xs[k] ?? 0));
     return a * b <= 0 ? 0 : (2 * a * b) / (a + b);
   };
-  const h = xs[i + 1]! - xs[i]!;
-  const t = (x - xs[i]!) / h;
+  const h = (xs[i + 1] ?? 0) - (xs[i] ?? 0);
+  const t = (x - (xs[i] ?? 0)) / h;
   const t2 = t * t;
   const t3 = t2 * t;
   return (
-    (2 * t3 - 3 * t2 + 1) * ys[i]! +
+    (2 * t3 - 3 * t2 + 1) * (ys[i] ?? 0) +
     (t3 - 2 * t2 + t) * h * slope(i) +
-    (-2 * t3 + 3 * t2) * ys[i + 1]! +
+    (-2 * t3 + 3 * t2) * (ys[i + 1] ?? 0) +
     (t3 - t2) * h * slope(i + 1)
   );
 }
 
-export type Profile = {
+export interface Profile {
   u: number;
   x: number;
   top: number;
@@ -118,7 +119,7 @@ export type Profile = {
   ridge: number;
   jawY: number;
   jaw: number;
-};
+}
 
 /** Dorsal fin height along u: small and falcate, about three quarters of the way back. */
 export function dorsalFin(u: number): number {
@@ -190,11 +191,11 @@ export function crossSection(p: Profile, theta: number, out: { y: number; z: num
 
 /* ---------------------------------------------------------------- skeleton */
 
-export type BoneSpec = { name: string; x: number; parent: number };
+export interface BoneSpec { name: string; x: number; parent: number }
 
 /** Spine bone stations along u (shares of the body), head→tail. */
 const SPINE_U = [0.094, 0.245, 0.434, 0.604, 0.745, 0.849, 0.934, 1];
-const spineX = (i: number) => HEAD_X + SPINE_U[i]! * BODY_LENGTH;
+const spineX = (i: number) => HEAD_X + (SPINE_U[i] ?? 0) * BODY_LENGTH;
 /** Spine bones sorted head→tail; B0 is the root near the centre of mass. */
 export const SPINE: BoneSpec[] = [
   { name: 'H2', x: spineX(0), parent: 1 },
@@ -248,28 +249,28 @@ const Z_AXIS = new THREE.Vector3(0, 0, 1);
 
 /* ---------------------------------------------------------------- geometry */
 
-type Part = {
+interface Part {
   positions: number[];
   uvs: number[];
   indices: number[];
   skinIndex: number[];
   skinWeight: number[];
   /** Pairs of vertex indices that share a position and must share a normal. */
-  seams: Array<[number, number]>;
-};
+  seams: [number, number][];
+}
 
 function newPart(): Part {
   return { positions: [], uvs: [], indices: [], skinIndex: [], skinWeight: [], seams: [] };
 }
 
 function spineWeights(x: number): [number, number, number, number] {
-  const first = SPINE[0]!;
-  const last = SPINE[SPINE.length - 1]!;
+  const first = item(SPINE, 0);
+  const last = item(SPINE, SPINE.length - 1);
   if (x <= first.x) return [0, 0, 1, 0];
   if (x >= last.x) return [SPINE.length - 1, 0, 1, 0];
   let i = 0;
-  while (x > SPINE[i + 1]!.x) i++;
-  const t = smoothstep(0, 1, (x - SPINE[i]!.x) / (SPINE[i + 1]!.x - SPINE[i]!.x));
+  while (x > item(SPINE, i + 1).x) i++;
+  const t = smoothstep(0, 1, (x - item(SPINE, i).x) / (item(SPINE, i + 1).x - item(SPINE, i).x));
   return [i, i + 1, 1 - t, t];
 }
 
@@ -283,15 +284,15 @@ export function ringStations(count: number): number[] {
     0.6 * Math.exp(-(((u - SPLASHGUARD_U) / 0.03) ** 2)) +
     1.1 * Math.exp(-(((u - 0.775) / 0.04) ** 2)) +
     0.5 * Math.exp(-(((u - 1) / 0.12) ** 2));
-  for (let i = 1; i <= samples; i++) cdf.push(cdf[i - 1]! + density((i - 0.5) / samples));
-  const total = cdf[samples]!;
+  for (let i = 1; i <= samples; i++) cdf.push((cdf[i - 1] ?? 0) + density((i - 0.5) / samples));
+  const total = cdf[samples] ?? 0;
   const out: number[] = [];
   let k = 0;
   for (let i = 0; i < count; i++) {
     const target = (i / (count - 1)) * total;
-    while (k < samples && cdf[k + 1]! < target) k++;
-    const span = cdf[k + 1]! - cdf[k]!;
-    const f = span > 0 ? (target - cdf[k]!) / span : 0;
+    while (k < samples && (cdf[k + 1] ?? 0) < target) k++;
+    const span = (cdf[k + 1] ?? 0) - (cdf[k] ?? 0);
+    const f = span > 0 ? (target - (cdf[k] ?? 0)) / span : 0;
     out.push(clamp((k + f) / samples, 0, 1));
   }
   out[0] = 0;
@@ -308,7 +309,7 @@ function buildBody(spec: DetailSpec, part: Part): void {
   const tmp = { y: 0, z: 0 };
   const ringStart: number[] = [];
   for (let i = 0; i < stations.length; i++) {
-    const u = stations[i]!;
+    const u = stations[i] ?? 0;
     // Keep a small first ring; the rostrum closes on a tip vertex. Remapped rather than clamped, so dense
     // stations near the tip never collapse onto one ring.
     const p = sampleProfile(0.004 + u * 0.996);
@@ -323,11 +324,11 @@ function buildBody(spec: DetailSpec, part: Part): void {
       part.skinIndex.push(w[0], w[1], 0, 0);
       part.skinWeight.push(w[2], w[3], 0, 0);
     }
-    part.seams.push([ringStart[i]!, ringStart[i]! + R]);
+    part.seams.push([ringStart[i] ?? 0, (ringStart[i] ?? 0) + R]);
   }
   for (let i = 0; i < stations.length - 1; i++) {
-    const a0 = ringStart[i]!;
-    const b0 = ringStart[i + 1]!;
+    const a0 = ringStart[i] ?? 0;
+    const b0 = ringStart[i + 1] ?? 0;
     for (let j = 0; j < R; j++) {
       const a = a0 + j;
       const b = b0 + j;
@@ -335,7 +336,7 @@ function buildBody(spec: DetailSpec, part: Part): void {
     }
   }
   // Caps: rostrum tip and a closed tail end hidden inside the fluke root.
-  const caps: Array<{ ring: number; x: number; flip: boolean; u: number }> = [
+  const caps: { ring: number; x: number; flip: boolean; u: number }[] = [
     { ring: 0, x: HEAD_X - 0.0033 * L, flip: true, u: 0 },
     { ring: stations.length - 1, x: TAIL_X + 0.005 * L, flip: false, u: 1 },
   ];
@@ -347,7 +348,7 @@ function buildBody(spec: DetailSpec, part: Part): void {
     part.uvs.push(cap.u, ATLAS_BODY_V + (1 - ATLAS_BODY_V) * 0.5);
     part.skinIndex.push(w[0], w[1], 0, 0);
     part.skinWeight.push(w[2], w[3], 0, 0);
-    const start = ringStart[cap.ring]!;
+    const start = ringStart[cap.ring] ?? 0;
     for (let j = 0; j < R; j++) {
       if (cap.flip) part.indices.push(tip, start + j + 1, start + j);
       else part.indices.push(tip, start + j, start + j + 1);
@@ -361,7 +362,7 @@ function foil(k: number): number {
   return 5 * (0.2969 * Math.sqrt(x) - 0.126 * x - 0.3516 * x * x + 0.2843 * x ** 3 - 0.1036 * x ** 4);
 }
 
-export type FlipperStation = { le: number; chord: number; thick: number };
+export interface FlipperStation { le: number; chord: number; thick: number }
 
 /** Flipper planform at span fraction s: short, slender, lightly swept, pointed, with a smooth leading edge. */
 export function flipperStation(s: number): FlipperStation {
@@ -411,7 +412,7 @@ function buildFlipper(spec: DetailSpec, side: 1 | -1, bone: number, tipBone: num
   }
 }
 
-export type FlukeStation = { le: number; chord: number; thick: number };
+export interface FlukeStation { le: number; chord: number; thick: number }
 
 /** Fluke planform at |z| / half-span a: swept leading edge, nearly straight trailing edge with a small notch, pointed tips. */
 export function flukeStation(a: number): FlukeStation {
@@ -476,11 +477,11 @@ function toGeometry(part: Part): THREE.BufferGeometry {
   return geo;
 }
 
-export type WhaleGeometryInfo = {
+export interface WhaleGeometryInfo {
   geometry: THREE.BufferGeometry;
   /** Vertex ranges per part, for tests and debugging. */
   ranges: Record<'body' | 'flipperL' | 'flipperR' | 'fluke', [number, number]>;
-};
+}
 
 /** One skinned mesh: body, both flippers and the flukes share a single draw call. */
 export function buildWhaleGeometry(detail: WhaleDetail): WhaleGeometryInfo {
@@ -496,16 +497,17 @@ export function buildWhaleGeometry(detail: WhaleDetail): WhaleGeometryInfo {
   buildFlipper(spec, -1, FLIPPER_R, FLIPPER_TIP_R, parts.flipperR);
   buildFluke(spec, parts.fluke);
 
-  const geos = (Object.keys(parts) as Array<keyof typeof parts>).map((key) => toGeometry(parts[key]));
+  const geos = (Object.keys(parts) as (keyof typeof parts)[]).map((key) => toGeometry(parts[key]));
   const ranges = {} as WhaleGeometryInfo['ranges'];
   let offset = 0;
-  const keys = Object.keys(parts) as Array<keyof typeof parts>;
+  const keys = Object.keys(parts) as (keyof typeof parts)[];
   keys.forEach((key, i) => {
-    const count = geos[i]!.getAttribute('position').count;
+    const count = item(geos, i).getAttribute('position').count;
     ranges[key] = [offset, offset + count];
     offset += count;
   });
-  const merged = mergeGeometries(geos);
+  // three's types promise a geometry; it returns null when the parts' attributes differ.
+  const merged = mergeGeometries(geos) as THREE.BufferGeometry | null;
   if (!merged) throw new Error('whale parts do not share attributes');
   for (const g of geos) g.dispose();
   merged.computeBoundingBox();
@@ -524,33 +526,33 @@ export function createWhaleBones(): THREE.Bone[] {
     world.push(new THREE.Vector3(spec.x, spineY(spec.x), 0));
   }
   SPINE.forEach((spec, i) => {
-    const bone = bones[i]!;
+    const bone = item(bones, i);
     if (spec.parent >= 0) {
-      bones[spec.parent]!.add(bone);
-      bone.position.copy(world[i]!).sub(world[spec.parent]!);
+      item(bones, spec.parent).add(bone);
+      bone.position.copy(item(world, i)).sub(item(world, spec.parent));
     } else {
-      bone.position.copy(world[i]!);
+      bone.position.copy(item(world, i));
     }
   });
   for (const side of [1, -1] as const) {
     const bone = new THREE.Bone();
     bone.name = side === 1 ? 'FlipperL' : 'FlipperR';
-    bone.position.copy(flipperRoot(side)).sub(world[ROOT_BONE]!);
+    bone.position.copy(flipperRoot(side)).sub(item(world, ROOT_BONE));
     flipperQuaternion(side, FLIPPER_DROOP, FLIPPER_SWEEP, 0, bone.quaternion);
-    bones[ROOT_BONE]!.add(bone);
+    item(bones, ROOT_BONE).add(bone);
     bones.push(bone);
   }
   const flex = new THREE.Bone();
   flex.name = 'FlukeFlex';
   flex.position.set(FLUKE_FLEX_X, 0, 0);
-  bones[FLUKE_BONE]!.add(flex);
+  item(bones, FLUKE_BONE).add(flex);
   bones.push(flex);
   for (const side of [1, -1] as const) {
     // In the flipper's own frame the span runs along ±Z from the root (see buildFlipper).
     const tip = new THREE.Bone();
     tip.name = side === 1 ? 'FlipperTipL' : 'FlipperTipR';
     tip.position.set(0, 0, side * (FLIPPER_TIP_S * FLIPPER_LENGTH - FLIPPER_SINK));
-    bones[side === 1 ? FLIPPER_L : FLIPPER_R]!.add(tip);
+    item(bones, side === 1 ? FLIPPER_L : FLIPPER_R).add(tip);
     bones.push(tip);
   }
   return bones;

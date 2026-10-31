@@ -1,5 +1,6 @@
 import { BREACH_EXIT, BREACH_SPLASH, type WhalePhase } from './whale-motion.js';
 import { clamp, smoothstep } from './math.js';
+import { item } from './item.js';
 
 /** Pure mixing rules for the sound: what plays, how loud, and where. No Web Audio here. */
 
@@ -24,7 +25,7 @@ export const WHALE_BREACH_SPLASH = 4;
 export const WHALE_DIVE = 8;
 export const WHALE_SURFACE = 16;
 
-export type WhaleMoment = { phase: WhalePhase; phaseT: number };
+export interface WhaleMoment { phase: WhalePhase; phaseT: number }
 
 /**
  * Lookback, in normalised phase time, when a phase starts or jumps backwards. A
@@ -89,7 +90,7 @@ export function oceanGain(clearance: number): number {
   return 0.7 - 0.25 * (1 - smoothstep(30, 300, Math.max(0, clearance)));
 }
 
-export type Muffle = { cutoff: number; above: number; below: number };
+export interface Muffle { cutoff: number; above: number; below: number }
 
 export const MUFFLE_OPEN = 18000;
 export const MUFFLE_CLOSED = 500;
@@ -124,7 +125,7 @@ export function hornGain(distance: number): number {
   return clamp(0.9 / (1 + distance / 220), 0, 0.9);
 }
 
-export type ShipPoint = { id: number; x: number; z: number };
+export interface ShipPoint { id: number; x: number; z: number }
 
 /**
  * Indices into `ships` of the nearest `max` within `range` of (x, z), nearest
@@ -142,21 +143,21 @@ export function nearestShips(
 ): number {
   let count = 0;
   for (let i = 0; i < ships.length; i++) {
-    const ship = ships[i]!;
+    const ship = item(ships, i);
     const d = Math.hypot(ship.x - x, ship.z - z);
     if (d > range) continue;
     // Insertion into the sorted top-`max` list.
     let at = count;
     while (at > 0) {
-      const j = out[at - 1]!;
-      const dj = scratch[at - 1]!;
-      if (dj < d || (dj === d && ships[j]!.id < ship.id)) break;
+      const j = out[at - 1] ?? 0;
+      const dj = scratch[at - 1] ?? 0;
+      if (dj < d || (dj === d && item(ships, j).id < ship.id)) break;
       at--;
     }
     if (at >= max) continue;
     for (let k = Math.min(count, max - 1); k > at; k--) {
-      out[k] = out[k - 1]!;
-      scratch[k] = scratch[k - 1]!;
+      out[k] = out[k - 1] ?? 0;
+      scratch[k] = scratch[k - 1] ?? 0;
     }
     out[at] = i;
     scratch[at] = d;

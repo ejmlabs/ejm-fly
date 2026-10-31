@@ -5,6 +5,7 @@ import { LATITUDE_SPAN } from '../src/planet.js';
 import { createRegionLook } from '../src/region-look.js';
 import { layoutWorld } from '../src/terrain.js';
 import { shipSpecsForCell } from '../src/world-ships.js';
+import { item } from '../src/item.js';
 
 const SEEDS = [42, 7, 1234, 99, 2024, 31337];
 const regionsOf = (seed: number) => layoutWorld(seed).land.regions;
@@ -26,7 +27,7 @@ test('regions are deterministic per seed, weights sum to one, the start is tempe
   assert.ok(differs);
   for (const seed of SEEDS) {
     const r = regionsOf(seed);
-    for (let a = 0; a < 16; a++) assert.equal(r.dominantAt(Math.cos(a) * 5000, Math.sin(a) * 5000), 0, `seed ${seed} start region`);
+    for (let a = 0; a < 16; a++) assert.equal(r.dominantAt(Math.cos(a) * 5000, Math.sin(a) * 5000), 0, `seed ${String(seed)} start region`);
   }
 });
 
@@ -40,7 +41,7 @@ test('region weights change by under 0.01 between samples 10 m apart, along any 
       let last = r.weightsAt(0, 0).slice();
       for (let i = 1; i <= 12000; i++) {
         const w = r.weightsAt(dx * i, dz * i);
-        for (let k = 0; k < 4; k++) assert.ok(Math.abs(w[k]! - last[k]!) < 0.01, `seed ${seed} line ${line} step ${i} region ${k}`);
+        for (let k = 0; k < 4; k++) assert.ok(Math.abs((w[k] ?? 0) - (last[k] ?? 0)) < 0.01, `seed ${String(seed)} line ${String(line)} step ${String(i)} region ${String(k)}`);
         last = w.slice();
       }
     }
@@ -56,11 +57,11 @@ test('all four regions occur along the migration: climate bands by latitude, dee
       const id = land.regions.dominantAt(x, z);
       seen.add(id);
       // Deep blue only out in open ocean, the climate bands by latitude elsewhere.
-      if (id === 3) assert.ok(land.planet.openAt(x, z) > DEEP_FULL / 2, `seed ${seed} deep blue ${(land.planet.openAt(x, z) / 1000).toFixed(0)} km from a continent`);
-      if (id === 1) assert.ok(land.planet.latitudeAt(x, z) < 0.4, `seed ${seed} tropical at latitude ${land.planet.latitudeAt(x, z).toFixed(2)}`);
-      if (id === 2) assert.ok(land.planet.latitudeAt(x, z) > 0.6, `seed ${seed} polar at latitude ${land.planet.latitudeAt(x, z).toFixed(2)}`);
+      if (id === 3) assert.ok(land.planet.openAt(x, z) > DEEP_FULL / 2, `seed ${String(seed)} deep blue ${(land.planet.openAt(x, z) / 1000).toFixed(0)} km from a continent`);
+      if (id === 1) assert.ok(land.planet.latitudeAt(x, z) < 0.4, `seed ${String(seed)} tropical at latitude ${land.planet.latitudeAt(x, z).toFixed(2)}`);
+      if (id === 2) assert.ok(land.planet.latitudeAt(x, z) > 0.6, `seed ${String(seed)} polar at latitude ${land.planet.latitudeAt(x, z).toFixed(2)}`);
     }
-    assert.equal(seen.size, 4, `seed ${seed} regions along 600 km: ${[...seen].join(', ')}`);
+    assert.equal(seen.size, 4, `seed ${String(seed)} regions along 600 km: ${[...seen].join(', ')}`);
   }
   assert.equal(LATITUDE_SPAN, 120000);
   assert.equal(REGION_BLEND, 5000);
@@ -76,7 +77,8 @@ test('the look changes by under 2 percent between frames at 28 m/s', () => {
     for (let i = 0; i <= 8000; i++) {
       look.update(i * frame * stride, 900 + i * 0.3);
       const now = [look.water.r, look.water.g, look.water.b, look.fogTint.r, look.fogTint.g, look.fogTint.b, look.fogMix, look.fogDensity, look.hazeDensity, look.land.r, look.land.g, look.land.b, ...look.birds];
-      if (last) now.forEach((v, k) => assert.ok(Math.abs(v - last![k]!) <= 0.02 * Math.max(Math.abs(last![k]!), 0.05) * stride, `seed ${seed} step ${i} channel ${k}`));
+      const before = last;
+      if (before) now.forEach((v, k) => { assert.ok(Math.abs(v - (before[k] ?? 0)) <= 0.02 * Math.max(Math.abs(before[k] ?? 0), 0.05) * stride, `seed ${String(seed)} step ${String(i)} channel ${String(k)}`); });
       last = now;
     }
   }
@@ -85,7 +87,7 @@ test('the look changes by under 2 percent between frames at 28 m/s', () => {
 test('the opening keeps its bay: open water around the start and the way out', () => {
   for (const seed of SEEDS) {
     const { land, whaleHome, journey } = layoutWorld(seed);
-    for (let a = 0; a < 24; a++) assert.ok(land.maskAt(Math.cos(a) * 200, Math.sin(a) * 200) < 0, `seed ${seed} land within 200 m of the start`);
+    for (let a = 0; a < 24; a++) assert.ok(land.maskAt(Math.cos(a) * 200, Math.sin(a) * 200) < 0, `seed ${String(seed)} land within 200 m of the start`);
     assert.ok(land.clearance(whaleHome.x, whaleHome.z) > 60);
     assert.ok(Number.isFinite(journey));
   }
@@ -98,9 +100,9 @@ test('regions set the ship density', () => {
   for (let cx = -20; cx < 20; cx++) {
     for (let cz = -20; cz < 20; cz++) {
       if (Math.hypot(cx, cz) < 2) continue;
-      sparse += shipSpecsForCell(42, cx, cz, land.maskAt, REGION_LOOKS[2]!.ships).length;
-      dense += shipSpecsForCell(42, cx, cz, land.maskAt, REGION_LOOKS[3]!.ships).length;
+      sparse += shipSpecsForCell(42, cx, cz, land.maskAt, item(REGION_LOOKS, 2).ships).length;
+      dense += shipSpecsForCell(42, cx, cz, land.maskAt, item(REGION_LOOKS, 3).ships).length;
     }
   }
-  assert.ok(sparse < dense * 0.7, `polar ${sparse} ships against deep blue ${dense}`);
+  assert.ok(sparse < dense * 0.7, `polar ${String(sparse)} ships against deep blue ${String(dense)}`);
 });

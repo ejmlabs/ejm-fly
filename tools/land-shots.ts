@@ -12,7 +12,7 @@ import { DAY, pickTimeOfDay } from '../src/sky.js';
  * usage: npx tsx tools/land-shots.ts <output directory> [seed]
  */
 
-type Life = { kind: 'town' | 'herd'; x: number; y: number; z: number; count: number; vantage: [number, number, number] | null };
+interface Life { kind: 'town' | 'herd'; x: number; y: number; z: number; count: number; vantage: [number, number, number] | null }
 type Stats = Record<string, number | string | number[]>;
 
 const target = process.argv[2];
@@ -29,7 +29,7 @@ const dayFor = (name: (typeof DAY)[number]) => (((DAY.indexOf(name) - start + DA
 const stats = (page: Page) => page.evaluate(() => (window as unknown as { __calmReview: { stats: () => Stats } }).__calmReview.stats());
 const call = (page: Page, hook: string, ...args: unknown[]) => page.evaluate(`window.__calmReview.${hook}(...${JSON.stringify(args)})`);
 
-const log: Array<Record<string, unknown>> = [];
+const log: Record<string, unknown>[] = [];
 const problems: string[] = [];
 
 async function settle(page: Page, ms: number): Promise<void> {
@@ -37,7 +37,9 @@ async function settle(page: Page, ms: number): Promise<void> {
   await page.waitForFunction(() => {
     const s = (window as unknown as { __calmReview: { stats: () => Stats } }).__calmReview.stats();
     return s['chunksPending'] === 0 && s['chunksFading'] === 0;
-  }, undefined, { timeout: 60000 }).catch(() => {});
+  }, undefined, { timeout: 60000 }).catch(() => {
+    // Settling is best effort: the shot is taken either way.
+  });
   await page.waitForTimeout(ms);
 }
 
@@ -54,7 +56,7 @@ async function shot(page: Page, device: DeviceProfile, label: string): Promise<v
 
 await withBrowser(async (browser, base) => {
   for (const device of [DESKTOP, MOBILE]) {
-    const { page, context, errors } = await openCalm(browser, base, device, { seed, query: { debug: '1' } });
+    const { page, context, errors } = await openCalm(browser, base, device, { seed, query: { debug: '1', frame: 'finish' } });
     try {
       await settle(page, 3000);
       await shot(page, device, 'land-opening');
@@ -73,7 +75,7 @@ await withBrowser(async (browser, base) => {
         await shot(page, device, `far-range-${day}`);
       }
       await call(page, 'view', null);
-      const life = (await page.evaluate('window.__calmReview.life(8000)')) as Life[];
+      const life = await page.evaluate<Life[]>('window.__calmReview.life(8000)');
       const seen = life.filter((l) => l.vantage);
       const town = seen.find((l) => l.kind === 'town');
       // A herd near the town if there is one, else the nearest.

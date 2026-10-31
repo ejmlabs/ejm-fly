@@ -22,7 +22,7 @@ test('the lane is the path the current carries a swimmer along from the start', 
       z += f.z * 100;
       worst = Math.max(worst, Math.abs(planet.laneAt(x, z).q));
     }
-    assert.ok(worst < 300, `seed ${seed}: ${worst.toFixed(0)} m off the lane after 300 km`);
+    assert.ok(worst < 300, `seed ${String(seed)}: ${worst.toFixed(0)} m off the lane after 300 km`);
   }
 });
 
@@ -44,7 +44,7 @@ test('Earth-like at planet scale: about a third land in big continents, the rest
     const land = new Uint8Array(SIDE * SIDE);
     for (let j = 0; j < SIDE; j++) for (let i = 0; i < SIDE; i++) land[j * SIDE + i] = planet.macroAt((i - SIDE / 2) * CELL, (j - SIDE / 2) * CELL) > 0 ? 1 : 0;
     const share = land.reduce((a, b) => a + b, 0) / land.length;
-    assert.ok(share > 0.2 && share < 0.45, `seed ${seed} land share ${(100 * share).toFixed(0)} percent`);
+    assert.ok(share > 0.2 && share < 0.45, `seed ${String(seed)} land share ${(100 * share).toFixed(0)} percent`);
     // Largest connected landmass and sea on the 8 km grid.
     const largest = (wanted: number): number => {
       const seen = new Uint8Array(land.length);
@@ -54,8 +54,7 @@ test('Earth-like at planet scale: about a third land in big continents, the rest
         const stack = [k];
         seen[k] = 1;
         let size = 0;
-        while (stack.length) {
-          const c = stack.pop()!;
+        for (let c = stack.pop(); c !== undefined; c = stack.pop()) {
           size++;
           const i = c % SIDE;
           for (const n of [c - 1, c + 1, c - SIDE, c + SIDE]) {
@@ -69,8 +68,8 @@ test('Earth-like at planet scale: about a third land in big continents, the rest
       return best;
     };
     // A continent of at least 20,000 square kilometres (about 140 km across), and one ocean holding most of the sea.
-    assert.ok(largest(1) * CELL * CELL > 2e10, `seed ${seed} largest landmass ${((largest(1) * CELL * CELL) / 1e6).toFixed(0)} km²`);
-    assert.ok(largest(0) > 0.6 * (1 - share) * land.length, `seed ${seed} the largest ocean holds ${((100 * largest(0)) / land.length).toFixed(0)} percent of the map`);
+    assert.ok(largest(1) * CELL * CELL > 2e10, `seed ${String(seed)} largest landmass ${((largest(1) * CELL * CELL) / 1e6).toFixed(0)} km²`);
+    assert.ok(largest(0) > 0.6 * (1 - share) * land.length, `seed ${String(seed)} the largest ocean holds ${((100 * largest(0)) / land.length).toFixed(0)} percent of the map`);
   }
 }, 60000);
 
@@ -96,8 +95,8 @@ test('along the migration the horizon is open most of the way: a coast now and t
     }
     const share = near / samples;
     total += share;
-    assert.ok(share > 0.08 && share < 0.5, `seed ${seed}: land within 6 km for ${(100 * share).toFixed(0)} percent of the first 300 km`);
-    assert.ok(longest >= 30000, `seed ${seed}: longest open stretch ${(longest / 1000).toFixed(0)} km`);
+    assert.ok(share > 0.08 && share < 0.5, `seed ${String(seed)}: land within 6 km for ${(100 * share).toFixed(0)} percent of the first 300 km`);
+    assert.ok(longest >= 30000, `seed ${String(seed)}: longest open stretch ${(longest / 1000).toFixed(0)} km`);
   }
   const mean = total / SEEDS.length;
   assert.ok(mean > 0.15 && mean < 0.4, `mean coast share ${(100 * mean).toFixed(0)} percent`);

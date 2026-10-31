@@ -1,19 +1,20 @@
 import * as THREE from 'three';
-import { fork } from './rng.js';
 import { SHIP_LAND_MARGIN, type ShipSpec } from './terrain.js';
 import { clampClearOfLand, type Shore } from './shore.js';
 import { swellAt, type SwellSample } from './swell.js';
+import { item } from './item.js';
 
-export type ShipHandle = {
+export interface ShipHandle {
   group: THREE.Group;
   spec: ShipSpec;
   /** Lantern positions in the ship's own frame (the group's scale and pose carry them to the world). */
   lanterns: readonly THREE.Vector3[];
   /** Hull length and beam in the ship's own frame, for the foam round it. */
   size: { length: number; beam: number };
-  update: (dt: number, time: number, shore: Shore) => void;
+  /** Moves the ship; `billow` also sways its sails (a rewrite of every sail vertex, so only where it can be seen). */
+  update: (dt: number, time: number, shore: Shore, billow?: boolean) => void;
   dispose: () => void;
-};
+}
 
 /** Ships are drawn this many times larger than their frame: a sloop is about 8 m long, a tall ship about 14. */
 export const SHIP_SIZE = 2.4;
@@ -27,7 +28,7 @@ const WOOD = new THREE.Color(0x3e3226);
 const CABIN = new THREE.Color(0x5a4a38);
 
 /** A part of a hull: geometry in its own frame, placed by a matrix, in one colour. */
-type Part = { geometry: THREE.BufferGeometry; matrix: THREE.Matrix4; color: THREE.Color };
+interface Part { geometry: THREE.BufferGeometry; matrix: THREE.Matrix4; color: THREE.Color }
 
 /** Bakes parts into one vertex-coloured, non-indexed geometry: the whole hull and rig is one draw. */
 function bake(parts: readonly Part[]): THREE.BufferGeometry {
@@ -36,17 +37,17 @@ function bake(parts: readonly Part[]): THREE.BufferGeometry {
     g.applyMatrix4(matrix);
     return g;
   });
-  const count = flat.reduce((n, g) => n + g.attributes.position!.count, 0);
+  const count = flat.reduce((n, g) => n + g.getAttribute('position').count, 0);
   const position = new Float32Array(count * 3);
   const normal = new Float32Array(count * 3);
   const color = new Float32Array(count * 3);
   let at = 0;
   flat.forEach((g, k) => {
-    const c = parts[k]!.color;
-    position.set(g.attributes.position!.array as Float32Array, at * 3);
-    normal.set(g.attributes.normal!.array as Float32Array, at * 3);
-    for (let v = 0; v < g.attributes.position!.count; v++) color.set([c.r, c.g, c.b], (at + v) * 3);
-    at += g.attributes.position!.count;
+    const c = item(parts, k).color;
+    position.set(g.getAttribute('position').array, at * 3);
+    normal.set(g.getAttribute('normal').array, at * 3);
+    for (let v = 0; v < g.getAttribute('position').count; v++) color.set([c.r, c.g, c.b], (at + v) * 3);
+    at += g.getAttribute('position').count;
     g.dispose();
   });
   const out = new THREE.BufferGeometry();
@@ -76,7 +77,7 @@ function hullGeometry(kind: ShipSpec['kind']): THREE.BufferGeometry {
   geo.rotateX(-Math.PI / 2);
   geo.translate(0, depth * 0.2, 0);
   // Sheer: the gunwale rises toward bow and stern.
-  const pos = geo.attributes.position!;
+  const pos = geo.getAttribute('position');
   for (let i = 0; i < pos.count; i++) {
     const t = Math.abs(pos.getX(i)) / (length / 2);
     if (pos.getY(i) > depth * 0.55) pos.setY(i, pos.getY(i) + 0.26 * t * t);
@@ -88,7 +89,7 @@ function hullGeometry(kind: ShipSpec['kind']): THREE.BufferGeometry {
 /** A sail: a sloop's main is a triangle along its mast, a tall ship's a trapezoid with a rounded foot; cloth is belly-curved and seamed. */
 function makeSail(width: number, height: number, triangle: boolean, belly = 0.55): THREE.PlaneGeometry {
   const geo = new THREE.PlaneGeometry(width, height, 12, 14);
-  const pos = geo.attributes.position!;
+  const pos = geo.getAttribute('position');
   const color = new Float32Array(pos.count * 3);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
@@ -112,7 +113,7 @@ function makeSail(width: number, height: number, triangle: boolean, belly = 0.55
   return geo;
 }
 
-type Rig = {
+interface Rig {
   hull: THREE.BufferGeometry;
   sails: THREE.BufferGeometry;
   /** Per sail vertex: its place at rest (xyz), the way it billows (xyz), and the sway weight and phase. */
@@ -122,13 +123,12 @@ type Rig = {
   phase: Float32Array;
   lanterns: THREE.Vector3[];
   size: { length: number; beam: number };
-};
+}
 
 function buildRig(spec: ShipSpec): Rig {
-  const rng = fork(spec.seed, 'mesh');
   const tall = spec.kind === 'tall';
-  const hullColor = HULLS[(spec.seed >>> 0) % HULLS.length]!;
-  const cloth = SAIL_CLOTH[(spec.seed >>> 3) % SAIL_CLOTH.length]!;
+  const hullColor = item(HULLS, (spec.seed >>> 0) % HULLS.length);
+  const cloth = item(SAIL_CLOTH, (spec.seed >>> 3) % SAIL_CLOTH.length);
   const parts: Part[] = [];
   const hullGeo = hullGeometry(spec.kind);
   parts.push({ geometry: hullGeo, matrix: at(0, 0, 0), color: hullColor });
@@ -146,7 +146,7 @@ function buildRig(spec: ShipSpec): Rig {
   parts.push({ geometry: new THREE.BoxGeometry(0.06, 0.7, 0.14), matrix: at(-length / 2 + 0.02, 0.4, 0), color: WOOD });
   // Masts and yards. A tall ship has three masts, each a course and a narrower topsail on yards, set a little off each other's angle so the sails stagger; a sloop has one.
   const mastXs = tall ? [-1.2, 0.15, 1.35] : [0.15];
-  const sailParts: Array<{ geometry: THREE.BufferGeometry; matrix: THREE.Matrix4 }> = [];
+  const sailParts: { geometry: THREE.BufferGeometry; matrix: THREE.Matrix4 }[] = [];
   mastXs.forEach((x, m) => {
     const mastH = tall ? 5.2 - Math.abs(m - 1) * 0.45 : 3.9;
     parts.push({ geometry: new THREE.CylinderGeometry(0.05, 0.08, mastH, 6), matrix: at(x, mastH / 2 + 0.9, 0), color: WOOD });
@@ -185,49 +185,46 @@ function buildRig(spec: ShipSpec): Rig {
 
   // All the sails in one geometry, each moved into the ship's frame; the billow is a push along each sail's own normal.
   const merged = bake(sailParts.map(({ geometry, matrix }) => ({ geometry, matrix, color: cloth })));
-  const sailColor = merged.attributes.color!.array as Float32Array;
+  const sailColor = merged.getAttribute('color');
   let v = 0;
-  const rest = new Float32Array(merged.attributes.position!.count * 3);
-  const push = new Float32Array(merged.attributes.position!.count * 3);
-  const weight = new Float32Array(merged.attributes.position!.count);
-  const phase = new Float32Array(merged.attributes.position!.count);
+  const rest = new Float32Array(merged.getAttribute('position').count * 3);
+  const push = new Float32Array(merged.getAttribute('position').count * 3);
+  const weight = new Float32Array(merged.getAttribute('position').count);
+  const phase = new Float32Array(merged.getAttribute('position').count);
   const e = new THREE.Vector3();
   sailParts.forEach(({ geometry, matrix }, k) => {
     const flat = geometry.index ? geometry.toNonIndexed() : geometry;
     const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix);
     e.set(0, 0, 1).applyMatrix3(normalMatrix).normalize();
-    const gp = flat.attributes.position!;
-    const gc = flat.attributes.color!;
+    const gp = flat.getAttribute('position');
+    const gc = flat.getAttribute('color');
     for (let i = 0; i < gp.count; i++, v++) {
-      rest[v * 3] = merged.attributes.position!.getX(v);
-      rest[v * 3 + 1] = merged.attributes.position!.getY(v);
-      rest[v * 3 + 2] = merged.attributes.position!.getZ(v);
+      rest[v * 3] = merged.getAttribute('position').getX(v);
+      rest[v * 3 + 1] = merged.getAttribute('position').getY(v);
+      rest[v * 3 + 2] = merged.getAttribute('position').getZ(v);
       push[v * 3] = e.x;
       push[v * 3 + 1] = e.y;
       push[v * 3 + 2] = e.z;
       weight[v] = 0.35 + Math.abs(gp.getX(i));
       phase[v] = gp.getY(i) * 2.2 + k;
       // The cloth's own shading rides on the cloth colour.
-      sailColor[v * 3] *= gc.getX(i);
-      sailColor[v * 3 + 1] *= gc.getY(i);
-      sailColor[v * 3 + 2] *= gc.getZ(i);
+      sailColor.setXYZ(v, sailColor.getX(v) * gc.getX(i), sailColor.getY(v) * gc.getY(i), sailColor.getZ(v) * gc.getZ(i));
     }
     if (flat !== geometry) flat.dispose();
     geometry.dispose();
   });
-  void rng;
   const top = tall ? 5.2 : 3.9;
-  const lanterns = [new THREE.Vector3(mastXs[tall ? 1 : 0]!, top + 1.0, 0), new THREE.Vector3(-length / 2 + 0.2, 1.3, 0)];
+  const lanterns = [new THREE.Vector3(mastXs[tall ? 1 : 0], top + 1.0, 0), new THREE.Vector3(-length / 2 + 0.2, 1.3, 0)];
   return { hull, sails: merged, rest, push, weight, phase, lanterns, size: { length, beam } };
 }
 
-export type ShipOptions = {
+export interface ShipOptions {
   /** World point the ship drifts around, and how far it may wander from it. */
   anchor?: { x: number; z: number };
   leash?: number;
   /** Only nudge off the coast where this says the shore is cheap to read (nav tile built). */
   shoreReady?: (x: number, z: number) => boolean;
-};
+}
 
 export function createShips(specs: ShipSpec[], options: ShipOptions = {}): ShipHandle[] {
   return specs.map((spec) => createShip(spec, options));
@@ -242,7 +239,6 @@ export function createShip(spec: ShipSpec, options: ShipOptions = {}): ShipHandl
     side: THREE.DoubleSide,
     emissive: new THREE.Color(0x2a2418),
     emissiveIntensity: 0.22,
-    envMapIntensity: 0.08,
   });
   const group = new THREE.Group();
   group.add(new THREE.Mesh(rig.hull, hullMaterial), new THREE.Mesh(rig.sails, sailMaterial));
@@ -256,14 +252,14 @@ export function createShip(spec: ShipSpec, options: ShipOptions = {}): ShipHandl
   let heading = spec.heading;
   const drift = 0.35 + ((spec.seed % 1000) / 1000) * 0.45;
   const swell: SwellSample = { height: 0, slopeX: 0, slopeZ: 0 };
-  const sailPos = rig.sails.attributes.position as THREE.BufferAttribute;
+  const sailPos = rig.sails.attributes['position'] as THREE.BufferAttribute;
 
   return {
     group,
     spec,
     lanterns: rig.lanterns,
     size: rig.size,
-    update(dt: number, time: number, shore: Shore) {
+    update(dt: number, time: number, shore: Shore, billow = true) {
       heading += dt * 0.015 * (spec.kind === 'sloop' ? 1 : 0.7);
       const speed = drift * dt;
       x += Math.sin(heading) * speed;
@@ -290,10 +286,11 @@ export function createShip(spec: ShipSpec, options: ShipOptions = {}): ShipHandl
       group.rotation.z = roll;
       group.rotation.x = pitch;
 
+      if (!billow) return;
       const { rest, push, weight, phase } = rig;
       for (let v = 0; v < weight.length; v++) {
-        const wave = Math.sin(time * 1.6 + phase[v]!) * 0.06 * weight[v]!;
-        sailPos.setXYZ(v, rest[v * 3]! + push[v * 3]! * wave, rest[v * 3 + 1]! + push[v * 3 + 1]! * wave, rest[v * 3 + 2]! + push[v * 3 + 2]! * wave);
+        const wave = Math.sin(time * 1.6 + (phase[v] ?? 0)) * 0.06 * (weight[v] ?? 0);
+        sailPos.setXYZ(v, (rest[v * 3] ?? 0) + (push[v * 3] ?? 0) * wave, (rest[v * 3 + 1] ?? 0) + (push[v * 3 + 1] ?? 0) * wave, (rest[v * 3 + 2] ?? 0) + (push[v * 3 + 2] ?? 0) * wave);
       }
       sailPos.needsUpdate = true;
     },

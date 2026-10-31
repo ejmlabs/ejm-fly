@@ -19,6 +19,7 @@ import {
   type WhalePhase,
   type WhalePose,
 } from './whale-motion.js';
+import { trimOldest } from './bounded.js';
 
 export type WhaleBehavior = 'travel' | 'feed' | 'breathe';
 
@@ -96,9 +97,9 @@ const DECIDE_EVERY = 0.5;
 
 /** A posed stretch (surface, spout, dive, breach, splash) played from whalePose. */
 /** A posed stretch; `lift` scales a fluke-up dive's fluke lift. */
-type Segment = { phase: WhalePhase; len: number; t: number; lift?: number };
+interface Segment { phase: WhalePhase; len: number; t: number; lift?: number }
 
-export type WhaleMotion = {
+export interface WhaleMotion {
   x: number;
   z: number;
   heading: number;
@@ -115,9 +116,9 @@ export type WhaleMotion = {
   site: FeedSite | null;
   /** Smoothed turn rate, rad/s (positive turns left): the body bends into it. */
   turn: number;
-};
+}
 
-export type WhaleMover = {
+export interface WhaleMover {
   motion: WhaleMotion;
   /** The pilot's course, for review and tools. */
   course: WhaleCourse;
@@ -128,7 +129,7 @@ export type WhaleMover = {
   force: (phase: WhalePhase, t: number) => void;
   /** Review only: put the whale at (x, z), keeping its heading. */
   place: (x: number, z: number) => void;
-};
+}
 
 /**
  * Pure, seeded whale behaviour: a small state machine on top of the journey planner.
@@ -224,12 +225,14 @@ export function createWhaleMover(
   };
 
   function siteIn(cx: number, cz: number): FeedSite | null {
-    const key = `${cx}:${cz}`;
+    const key = `${String(cx)}:${String(cz)}`;
     let s = cells.get(key);
     if (s === undefined) {
-      s = feedSiteInCell(seed, cx, cz, floorAt!);
+      // Without a seabed there is nothing to feed over.
+      if (!floorAt) return null;
+      s = feedSiteInCell(seed, cx, cz, floorAt);
       cells.set(key, s);
-      if (cells.size > 256) cells.delete(cells.keys().next().value!);
+      trimOldest(cells, 256);
     }
     return s;
   }
@@ -243,7 +246,7 @@ export function createWhaleMover(
       for (let cx = Math.floor((course.x - FEED_RANGE) / FEED_CELL); cx <= Math.floor((course.x + FEED_RANGE) / FEED_CELL); cx++) {
         const s = siteIn(cx, cz);
         // Blue whales feed on krill only.
-        if (!s || s.kind !== 'krill' || visited.has(s.id)) continue;
+        if (s?.kind !== 'krill' || visited.has(s.id)) continue;
         const dx = s.x - course.x;
         const dz = s.z - course.z;
         const d = Math.hypot(dx, dz);
@@ -258,7 +261,7 @@ export function createWhaleMover(
 
   function endFeed(time: number): void {
     if (site) visited.add(site.id);
-    if (visited.size > 64) visited.delete(visited.values().next().value!);
+    trimOldest(visited, 64);
     site = null;
     feedStart = null;
     behavior = 'travel';
@@ -445,9 +448,10 @@ export function createWhaleMover(
     let phaseT: number;
     /** Cruise time this step: only what is left after a segment that ended part way through it. */
     let cruiseDt = dt;
-    if (!seg && queue.length) {
+    const queued = seg ? undefined : queue.shift();
+    if (queued) {
       cruisePose(leave);
-      seg = queue.shift()!;
+      seg = queued;
       whalePose(seg.phase, 0, pick, seg.lift);
     }
     if (seg) seg.t += dt;

@@ -1,13 +1,14 @@
+import { item } from './item.js';
 /** Simple boids: separation, alignment and cohesion within a group, plus a pull toward that group's leader. */
-export type Boid = { x: number; y: number; z: number; vx: number; vy: number; vz: number; group: number; size: number };
-export type Leader = { x: number; y: number; z: number };
-export type FlockParams = {
+export interface Boid { x: number; y: number; z: number; vx: number; vy: number; vz: number; group: number; size: number }
+export interface Leader { x: number; y: number; z: number }
+export interface FlockParams {
   /** Metres per second for each group (cruise speed). */
   speeds: readonly number[];
   /** Lowest height above the water (m). */
   minHeight: number;
   maxHeight: number;
-};
+}
 
 const SEPARATION = 7;
 const NEIGHBOURS = 55;
@@ -16,8 +17,8 @@ const NEIGHBOURS = 55;
 export function stepFlock(boids: Boid[], leaders: readonly Leader[], params: FlockParams, dt: number): void {
   if (dt <= 0) return;
   for (const bird of boids) {
-    const leader = leaders[bird.group]!;
-    const cruise = params.speeds[bird.group]!;
+    const leader = item(leaders, bird.group);
+    const cruise = params.speeds[bird.group] ?? 0;
     let sepX = 0, sepY = 0, sepZ = 0;
     let avgVx = 0, avgVz = 0, avgX = 0, avgY = 0, avgZ = 0;
     let near = 0;

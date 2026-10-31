@@ -11,9 +11,11 @@ it came from. Software GL and plain Node numbers are never device numbers.
 
 ## The gate
 
-- On the head commit, in a clean clone or worktree: `npm ci --ignore-scripts`, `npm test` and
-  `npm run test:browser`. All must pass before merge. Never run them in a checkout that holds
-  someone else's work.
+- On the head commit, in a clean clone or worktree, with Node 24: `npm ci --ignore-scripts`,
+  `npm run lint`, `npm test` and `npm run test:browser`. All must pass before merge. Never run
+  them in a checkout that holds someone else's work.
+- Run the gate on an idle machine. The hour-long swims have a 240 s limit and the smoke a
+  streaming budget; a lint or build running beside them on a four-core machine pushes both over.
 - `npm test` is Vitest in Node: unit tests, hour-long simulated swims, and a `vite build` with
   the `dist` allowlist and header checks in `tests/deploy.test.ts`. Tests allow 30 s each.
 - `npm run test:browser` typechecks, builds, and runs `tools/smoke.ts` in headless system Chrome

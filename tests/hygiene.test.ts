@@ -2,6 +2,7 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
+import { item } from '../src/item.js';
 
 const root = resolve(import.meta.dirname, '..');
 // Keep the disallowed vocabulary encoded so it cannot occur in the scanned sources.
@@ -21,12 +22,12 @@ async function files(directory: string): Promise<string[]> {
 }
 
 export function loadedAddresses(source: string, html = false, css = false): string[] {
-  if (css) return [...source.matchAll(/(?:url\(\s*|@import\s+)["']?([^\s)"']+)/gi)].map((match) => match[1]!).filter((value) => /^(?:https?:)?\/\//i.test(value));
+  if (css) return [...source.matchAll(/(?:url\(\s*|@import\s+)["']?([^\s)"']+)/gi)].map((match) => item(match, 1)).filter((value) => /^(?:https?:)?\/\//i.test(value));
   if (!html) return source.match(/https?:\/\/[^\s'"`<>]+/gi) ?? [];
   const result: string[] = [];
   for (const [tag] of source.matchAll(/<(?:script|img|source|video|audio|link|iframe|embed|object)\b[^>]*>/gi)) {
     for (const [, value] of tag.matchAll(/(?:src|href|srcset|poster|data)\s*=\s*["']([^"']*)["']/gi)) {
-      if (value && (/^https?:\/\//i.test(value) || /^\/\//.test(value))) result.push(value);
+      if (value && (/^https?:\/\//i.test(value) || value.startsWith("//"))) result.push(value);
     }
   }
   return result;

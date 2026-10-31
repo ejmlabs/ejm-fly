@@ -3,7 +3,7 @@ import { isPace, type Pace } from './pace.js';
 export const STORAGE_KEY = 'ejm-calm:v1';
 export const VERSION = 1;
 
-export type CalmMemory = {
+export interface CalmMemory {
   version: number;
   seed: number;
   sound?: { enabled: boolean; volume: number };
@@ -14,7 +14,7 @@ export type CalmMemory = {
   pace?: Pace;
   /** Follow the whale down on its dives (on unless set to false). */
   dives?: boolean;
-};
+}
 
 export function validateMemory(value: unknown): value is CalmMemory {
   if (!value || typeof value !== 'object') return false;

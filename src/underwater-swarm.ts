@@ -3,6 +3,7 @@ import type { QualityTier } from './quality.js';
 import type { FloatingOrigin } from './seams.js';
 import { hash } from './rng.js';
 import { feedSitesNear, type FeedSite } from './feed-sites.js';
+import { item } from './item.js';
 
 /**
  * Krill clouds and bait balls drawn at the feed sites near the camera. Each
@@ -24,13 +25,13 @@ const COUNTS: Record<QualityTier, { krill: number; baitball: number }> = {
   high: { krill: 1000, baitball: 520 },
 };
 
-export type Swarms = {
+export interface Swarms {
   group: THREE.Group;
   /** Sites currently drawn, nearest first. */
   readonly sites: readonly FeedSite[];
   update: (time: number, camWorldX: number, camWorldZ: number, whaleRender: THREE.Vector3, origin: FloatingOrigin, pointScale: number, draw: boolean) => void;
   dispose: () => void;
-};
+}
 
 function swarmGeometry(count: number, salt: number): THREE.BufferGeometry {
   const position = new Float32Array(count * 3);
@@ -171,15 +172,15 @@ export function createSwarms(seed: number, floorAt: (x: number, z: number) => nu
         const look = looks[site.kind];
         const u = slot.material.uniforms;
         slot.points.geometry = geometries[site.kind];
-        (u['uCentre']!.value as THREE.Vector3).set(site.x - origin.x, site.y, site.z - origin.z);
-        u['uRadius']!.value = site.radius;
-        u['uTime']!.value = time;
-        (u['uWhale']!.value as THREE.Vector3).copy(whaleRender);
-        u['uScale']!.value = pointScale;
-        (u['uColor']!.value as THREE.Color).copy(look.color);
-        u['uSpin']!.value = look.spin;
-        u['uSize']!.value = look.size;
-        u['uGlint']!.value = look.glint;
+        (item(u, 'uCentre').value as THREE.Vector3).set(site.x - origin.x, site.y, site.z - origin.z);
+        item(u, 'uRadius').value = site.radius;
+        item(u, 'uTime').value = time;
+        (item(u, 'uWhale').value as THREE.Vector3).copy(whaleRender);
+        item(u, 'uScale').value = pointScale;
+        (item(u, 'uColor').value as THREE.Color).copy(look.color);
+        item(u, 'uSpin').value = look.spin;
+        item(u, 'uSize').value = look.size;
+        item(u, 'uGlint').value = look.glint;
       });
     },
     dispose() {

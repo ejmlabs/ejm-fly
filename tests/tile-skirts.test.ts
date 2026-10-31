@@ -15,13 +15,14 @@ test('tile skirts never hang far into the sea: no dark walls under a coast', () 
     },
     regions: {} as Regions,
   };
-  const tile = buildTile(land, makeNoise2D(1, 2), level, 0, 0, 16)!;
+  const tile = buildTile(land, makeNoise2D(1, 2), level, 0, 0, 16);
+  assert.ok(tile);
   let lowest = Infinity;
-  for (let i = 1; i < tile.positions.length; i += 3) lowest = Math.min(lowest, tile.positions[i]!);
+  for (let i = 1; i < tile.positions.length; i += 3) lowest = Math.min(lowest, tile.positions[i] ?? 0);
   // The grid itself goes down to about 12 m under the sea; no skirt reaches more than 2.5 m below that.
-  assert.ok(lowest > -12 - 0.7 - 2.5 - 1e-3, `lowest vertex ${lowest} m`);
+  assert.ok(lowest > -12 - 0.7 - 2.5 - 1e-3, `lowest vertex ${String(lowest)} m`);
   // Up on the land the skirts still hang all the way down to just under the sea, so coarser neighbours show no crack.
   let highSkirt = false;
-  for (let i = 1; i < tile.positions.length; i += 3) if (tile.positions[i - 1]! < 1e-3 && Math.abs(tile.positions[i]! + 2.5) < 1e-3) highSkirt = true;
+  for (let i = 1; i < tile.positions.length; i += 3) if ((tile.positions[i - 1] ?? 0) < 1e-3 && Math.abs((tile.positions[i] ?? 0) + 2.5) < 1e-3) highSkirt = true;
   assert.ok(highSkirt, 'skirts below the high edge reach down to the sea');
 });

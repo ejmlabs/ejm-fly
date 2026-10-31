@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { clamp } from './math.js';
 import { UNDER_MAX_DISTANCE, UNDER_ORBIT_PITCH, type FollowCamera, type ReviewView } from './camera.js';
 import { LENGTH_SCALE } from './whale-size.js';
+import { item } from './item.js';
 
 /** Orbit distance from the whale, metres: clear of its body, never so far it is a speck. */
 export const ORBIT_DISTANCE: readonly [number, number] = [10 * LENGTH_SCALE, 60 * LENGTH_SCALE];
@@ -11,14 +12,14 @@ export const ORBIT_PITCH: readonly [number, number] = [0.02, 1.3];
 const KEY_TURN = 0.12;
 const KEY_ZOOM = 1.15;
 
-export type ViewControls = {
+export interface ViewControls {
   readonly orbiting: boolean;
   /** Reads the controls into the follow camera; call once a frame before it updates. */
   update: (reducedMotion: boolean) => void;
   /** Back to the default follow camera. */
   reset: () => void;
   dispose: () => void;
-};
+}
 
 /**
  * Drag, touch, wheel, pinch and keys orbit and zoom around the whale. OrbitControls moves a proxy
@@ -65,19 +66,19 @@ export function createViewControls(canvas: HTMLCanvasElement, rig: FollowCamera,
   const onKey = (event: KeyboardEvent) => {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const move: Record<string, () => void> = {
-      ArrowLeft: () => controls.rotateLeft(KEY_TURN),
-      ArrowRight: () => controls.rotateLeft(-KEY_TURN),
-      ArrowUp: () => controls.rotateUp(KEY_TURN),
-      ArrowDown: () => controls.rotateUp(-KEY_TURN),
+      ArrowLeft: () => { controls.rotateLeft(KEY_TURN); },
+      ArrowRight: () => { controls.rotateLeft(-KEY_TURN); },
+      ArrowUp: () => { controls.rotateUp(KEY_TURN); },
+      ArrowDown: () => { controls.rotateUp(-KEY_TURN); },
       // OrbitControls' dollyOut moves the eye closer.
-      '+': () => controls.dollyOut(KEY_ZOOM),
-      '=': () => controls.dollyOut(KEY_ZOOM),
-      '-': () => controls.dollyIn(KEY_ZOOM),
+      '+': () => { controls.dollyOut(KEY_ZOOM); },
+      '=': () => { controls.dollyOut(KEY_ZOOM); },
+      '-': () => { controls.dollyIn(KEY_ZOOM); },
     };
     if (event.key === '0' || event.key === 'Home') reset();
     else if (move[event.key]) {
       engage();
-      move[event.key]!();
+      item(move, event.key)();
     } else return;
     event.preventDefault();
   };

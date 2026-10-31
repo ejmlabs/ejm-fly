@@ -4,7 +4,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { request } from 'node:http';
+import { request, type IncomingHttpHeaders } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { startServer, ICON_FILES } from '../tools/serve.js';
 
@@ -17,13 +17,13 @@ beforeAll(async () => {
 });
 afterAll(() => rm(dist, { recursive: true, force: true }));
 
-type FetchResult = { status: number | undefined; headers: import('node:http').IncomingHttpHeaders; body: string };
+interface FetchResult { status: number | undefined; headers: IncomingHttpHeaders; body: string }
 
 function fetchRaw(base: string, path: string, method = 'GET', headers: Record<string, string> = {}): Promise<FetchResult> {
   return new Promise((accept, reject) => {
     const req = request(base, { path, method, headers }, (response) => {
-      let body = ''; response.setEncoding('utf8'); response.on('data', (chunk) => { body += chunk; });
-      response.on('end', () => accept({ status: response.statusCode, headers: response.headers, body }));
+      let body = ''; response.setEncoding('utf8'); response.on('data', (chunk: string) => { body += chunk; });
+      response.on('end', () => { accept({ status: response.statusCode, headers: response.headers, body }); });
     });
     req.on('error', reject); req.end();
   });
@@ -39,7 +39,7 @@ test('static server provides module MIME types and rejects traversal and unsuppo
   try {
     const script = await fetchRaw(app.url, scriptPath);
     const csp = String(script.headers['content-security-policy'] ?? '');
-    assert.equal(script.status, 200); assert.match(String(script.headers['content-type'] ?? ''), /text\/javascript/);
+    assert.equal(script.status, 200); assert.match(script.headers['content-type'] ?? '', /text\/javascript/);
     assert.equal(script.headers['x-content-type-options'], 'nosniff');
     assert.match(csp, /script-src 'self'/);
     assert.match(csp, /connect-src 'self'/);
@@ -50,13 +50,15 @@ test('static server provides module MIME types and rejects traversal and unsuppo
     const zipped = await new Promise<Buffer>((accept, reject) => {
       const req = request(app.url, { path: scriptPath, headers: { 'Accept-Encoding': 'gzip, br' } }, (response) => {
         assert.equal(response.headers['content-encoding'], 'gzip');
-        const chunks: Buffer[] = []; response.on('data', (chunk: Buffer) => chunks.push(chunk)); response.on('end', () => accept(Buffer.concat(chunks)));
+        const chunks: Buffer[] = []; response.on('data', (chunk: Buffer) => chunks.push(chunk)); response.on('end', () => { accept(Buffer.concat(chunks)); });
       });
       req.on('error', reject); req.end();
     });
     assert.equal(gunzipSync(zipped).toString('utf8'), script.body, 'text is gzipped when accepted, and only then');
     assert.equal(script.headers['content-encoding'], undefined);
-    assert.equal((await fetchRaw(app.url, `/${ICON_FILES.find((name) => name.endsWith('.png'))!}`, 'GET', { 'Accept-Encoding': 'gzip' })).headers['content-encoding'], undefined);
+    const png = ICON_FILES.find((name) => name.endsWith('.png'));
+    assert.ok(png);
+    assert.equal((await fetchRaw(app.url, `/${png}`, 'GET', { 'Accept-Encoding': 'gzip' })).headers['content-encoding'], undefined);
     assert.equal((await fetchRaw(app.url, '/')).status, 200);
     assert.equal((await fetchRaw(app.url, '/styles.css')).status, 404);
     assert.equal((await fetchRaw(app.url, '/LICENSE')).status, 200);

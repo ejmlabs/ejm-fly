@@ -15,6 +15,7 @@ import { biomeColor } from '../src/landmesh.js';
 import { clampClearOfLand } from '../src/shore.js';
 import { validateMemory, VERSION } from '../src/persistence.js';
 import { fbm2, makeNoise2D, ridged2 } from '../src/noise.js';
+import { item } from '../src/item.js';
 
 test('random streams are repeatable, independent, and unsigned', () => {
   const a = random(42), b = random(42), c = random(43);
@@ -42,7 +43,8 @@ test('seeds parse complete unsigned decimals and reject ambiguous input', () => 
 const SEEDS = [0, 7, 42, 1234, 99991];
 
 function layoutData(seed: number) {
-  const { land: _land, ...rest } = layoutWorld(seed);
+  const { land, ...rest } = layoutWorld(seed);
+  assert.ok(land);
   return rest;
 }
 
@@ -62,8 +64,8 @@ test('noise stays bounded and land heights are finite and deterministic per seed
     const x = Math.sin(i * 12.9898) * 5000;
     const z = Math.cos(i * 78.233) * 5000;
     const h = a.heightAt(x, z);
-    assert.ok(Number.isFinite(h), `height at ${x},${z}`);
-    assert.ok(h > -700 && h < 2600, `height ${h} out of range`);
+    assert.ok(Number.isFinite(h), `height at ${String(x)},${String(z)}`);
+    assert.ok(h > -700 && h < 2600, `height ${String(h)} out of range`);
     assert.equal(h, b.heightAt(x, z));
     assert.equal(a.maskAt(x, z) > 0, h >= 0, 'mask and height agree on land');
     if (h !== c.heightAt(x, z)) differs++;
@@ -76,7 +78,7 @@ test('the opening keeps Earth-like land and long coasts, with the open ocean bey
   for (const seed of SEEDS) {
     const land = layoutWorld(seed).land;
     const fraction = landFraction(land);
-    assert.ok(fraction > 0.1 && fraction < 0.6, `seed ${seed} land fraction ${fraction.toFixed(2)}`);
+    assert.ok(fraction > 0.1 && fraction < 0.6, `seed ${String(seed)} land fraction ${fraction.toFixed(2)}`);
     // Count land/sea transitions along rows: fractal coasts cross often.
     let crossings = 0;
     for (let row = -3000; row <= 3000; row += 500) {
@@ -87,7 +89,7 @@ test('the opening keeps Earth-like land and long coasts, with the open ocean bey
         prev = here;
       }
     }
-    assert.ok(crossings > 20, `seed ${seed} coast crossings ${crossings}`);
+    assert.ok(crossings > 20, `seed ${String(seed)} coast crossings ${String(crossings)}`);
     // Highlands in the opening: only the disc the regions leave untouched counts (450 m does not hold in this disc: the five seeds peak at 263 to 425 m).
     let peak = 0;
     for (let x = -REGION_FROM; x <= REGION_FROM; x += 60) {
@@ -95,7 +97,7 @@ test('the opening keeps Earth-like land and long coasts, with the open ocean bey
         if (Math.hypot(x, z) < REGION_FROM) peak = Math.max(peak, land.heightAt(x, z));
       }
     }
-    assert.ok(peak > 250, `seed ${seed} highest point ${peak.toFixed(0)}`);
+    assert.ok(peak > 250, `seed ${String(seed)} highest point ${peak.toFixed(0)}`);
   }
 });
 
@@ -105,12 +107,12 @@ test('world layout is deterministic and keeps ships and whale in open water', ()
     assert.deepEqual(layoutData(seed), layoutData(seed));
     assert.ok(world.ships.length >= 2 && world.ships.length <= 5);
     for (const ship of world.ships) {
-      assert.ok(world.land.heightAt(ship.x, ship.z) < -2, `seed ${seed} ship ${ship.id} on land`);
-      assert.ok(world.land.clearance(ship.x, ship.z) >= SHIP_LAND_MARGIN - 1, `seed ${seed} ship ${ship.id} near shore`);
+      assert.ok(world.land.heightAt(ship.x, ship.z) < -2, `seed ${String(seed)} ship ${String(ship.id)} on land`);
+      assert.ok(world.land.clearance(ship.x, ship.z) >= SHIP_LAND_MARGIN - 1, `seed ${String(seed)} ship ${String(ship.id)} near shore`);
     }
     const home = world.whaleHome;
     assert.ok(Number.isFinite(home.x) && Number.isFinite(home.z));
-    assert.ok(world.land.clearance(home.x, home.z) > 100, `seed ${seed} whale home too close to land`);
+    assert.ok(world.land.clearance(home.x, home.z) > 100, `seed ${String(seed)} whale home too close to land`);
   }
 });
 
@@ -120,13 +122,13 @@ test('shore clearance tracks the coast and clamping lands in water', () => {
     const x = Math.sin(i * 3.1) * 1200;
     const z = Math.cos(i * 1.7) * 1200;
     const gap = land.clearance(x, z);
-    if (land.maskAt(x, z) > 0.05) assert.ok(gap <= land.grid.cell, `land point has clearance ${gap}`);
+    if (land.maskAt(x, z) > 0.05) assert.ok(gap <= land.grid.cell, `land point has clearance ${String(gap)}`);
     // Floating things start at sea and get nudged off the beach.
     if (gap < -40 || gap > 30) continue;
     const out = clampClearOfLand(x, z, land, 30);
     const after = land.clearance(out.x, out.z);
-    assert.ok(after >= Math.min(30, gap) - 1e-6, `clamp lost clearance ${gap} -> ${after}`);
-    assert.ok(after > 4, `clamp left ${after} m from shore`);
+    assert.ok(after >= Math.min(30, gap) - 1e-6, `clamp lost clearance ${String(gap)} -> ${String(after)}`);
+    assert.ok(after > 4, `clamp left ${String(after)} m from shore`);
     assert.ok(land.maskAt(out.x, out.z) < 0, 'clamped point is at sea');
   }
 });
@@ -159,8 +161,8 @@ test('biomes: beaches at the waterline, green lowlands, rock on cliffs, snow on 
 test('seeds 1..50 put the hero ship and a coastline in the portrait view cone at t=0', () => {
   for (let seed = 1; seed <= 50; seed++) {
     const world = layoutWorld(seed, 185);
-    const hero = world.ships[0]!;
-    assert.ok(hero, `seed ${seed} missing hero ship`);
+    const hero = item(world.ships, 0);
+    assert.ok(hero, `seed ${String(seed)} missing hero ship`);
     const focus = {
       x: world.whaleHome.x * 0.78 + hero.x * 0.22,
       z: world.whaleHome.z * 0.78 + hero.z * 0.22,
@@ -168,12 +170,12 @@ test('seeds 1..50 put the hero ship and a coastline in the portrait view cone at
     assert.equal(
       world.viewYaw,
       computeViewYaw(world.whaleHome, hero, [], 185),
-      `seed ${seed} viewYaw mismatch`,
+      `seed ${String(seed)} viewYaw mismatch`,
     );
-    assert.ok(inPortraitViewCone(world.viewYaw, focus, hero), `seed ${seed}: hero ship outside portrait view cone`);
+    assert.ok(inPortraitViewCone(world.viewYaw, focus, hero), `seed ${String(seed)}: hero ship outside portrait view cone`);
     const coast = coastAhead(world.land, world.viewYaw, focus, 2600, (28 * Math.PI) / 180);
-    assert.ok(coast, `seed ${seed}: no coastline in view`);
-    assert.ok(coast.dist > 180, `seed ${seed}: coast ${coast.dist} m crowds the camera`);
+    assert.ok(coast, `seed ${String(seed)}: no coastline in view`);
+    assert.ok(coast.dist > 180, `seed ${String(seed)}: coast ${String(coast.dist)} m crowds the camera`);
 
     // The coast is not a wall: its distance varies across the view, with an islet or headland gap.
     const hits: number[] = [];
@@ -194,8 +196,8 @@ test('seeds 1..50 put the hero ship and a coastline in the portrait view cone at
       }
       hits.push(hit);
     }
-    assert.ok(coastSpread(hits) >= 600, `seed ${seed}: coast reads as a wall (${hits.join(' ')})`);
-    assert.ok(islet, `seed ${seed}: no islet or headland gap in view`);
+    assert.ok(coastSpread(hits) >= 600, `seed ${String(seed)}: coast reads as a wall (${hits.join(' ')})`);
+    assert.ok(islet, `seed ${String(seed)}: no islet or headland gap in view`);
   }
 }, 30000);
 
@@ -212,13 +214,13 @@ test('shallow shelves sit in view between the camera and the coast', () => {
         const x = -Math.sin(yaw) * d;
         const z = -Math.cos(yaw) * d;
         if (world.land.maskAt(x, z) > 0) break;
-        const v = shelf.data[Math.round((z - shelf.min) / cell) * shelf.size + Math.round((x - shelf.min) / cell)]!;
+        const v = shelf.data[Math.round((z - shelf.min) / cell) * shelf.size + Math.round((x - shelf.min) / cell)] ?? 0;
         if (v > 200) shallow++;
         if (v < 150) deep++;
       }
     }
-    assert.ok(shallow > 20, `seed ${seed}: only ${shallow} shallow samples in view`);
-    assert.ok(deep > 10, `seed ${seed}: no deeper water in view (${deep})`);
+    assert.ok(shallow > 20, `seed ${String(seed)}: only ${String(shallow)} shallow samples in view`);
+    assert.ok(deep > 10, `seed ${String(seed)}: no deeper water in view (${String(deep)})`);
   }
 });
 

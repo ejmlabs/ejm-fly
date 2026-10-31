@@ -3,6 +3,7 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
+import { item } from '../src/item.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = resolve(ROOT, 'dist');
@@ -45,20 +46,20 @@ function allowed(relative: string): boolean {
   return false;
 }
 
-export type StartServerOptions = {
+export interface StartServerOptions {
   port?: number;
   root?: string;
-};
+}
 
-export type AppServer = {
+export interface AppServer {
   server: ReturnType<typeof createServer>;
   url: string;
   close: () => Promise<void>;
-};
+}
 
 export async function startServer({ port = 8080, root = DIST }: StartServerOptions = {}): Promise<AppServer> {
   const base = await realpath(root);
-  const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
+  const respond = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const reply = (status: number, body: string) => {
       response.writeHead(status, { ...HEADERS, 'Content-Type': 'text/plain; charset=utf-8' });
       response.end(request.method === 'HEAD' ? undefined : body);
@@ -70,7 +71,7 @@ export async function startServer({ port = 8080, root = DIST }: StartServerOptio
     }
     let path: string;
     try {
-      path = decodeURIComponent((request.url ?? '/').split('?')[0]!);
+      path = decodeURIComponent(item((request.url ?? '/').split('?'), 0));
     } catch {
       reply(400, 'Invalid path');
       return;
@@ -96,7 +97,7 @@ export async function startServer({ port = 8080, root = DIST }: StartServerOptio
       }
       const type = MIME[extname(file)] ?? 'application/octet-stream';
       // Text is gzipped when the browser accepts it, as production hosts serve it.
-      const gzip = /^(text\/|application\/json|image\/svg)/.test(type) && /\bgzip\b/.test(String(request.headers['accept-encoding'] ?? ''));
+      const gzip = /^(text\/|application\/json|image\/svg)/.test(type) && /\bgzip\b/.test(request.headers['accept-encoding'] ?? '');
       const body = gzip ? gzipSync(await readFile(file)) : await readFile(file);
       response.writeHead(200, {
         ...HEADERS,
@@ -109,6 +110,9 @@ export async function startServer({ port = 8080, root = DIST }: StartServerOptio
     } catch {
       reply(404, 'Not found');
     }
+  };
+  const server = createServer((request, response) => {
+    void respond(request, response);
   });
   await new Promise<void>((accept, reject) => {
     server.once('error', reject);
@@ -118,21 +122,29 @@ export async function startServer({ port = 8080, root = DIST }: StartServerOptio
   if (!address || typeof address === 'string') throw new Error('Server failed to bind a port');
   return {
     server,
-    url: `http://127.0.0.1:${address.port}`,
-    close: () => new Promise<void>((accept, reject) => server.close((error) => (error ? reject(error) : accept()))),
+    url: `http://127.0.0.1:${String(address.port)}`,
+    close: () => new Promise<void>((accept, reject) => server.close((error) => {
+      if (error) reject(error);
+      else accept();
+    })),
   };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const raw = process.env.PORT ?? process.argv[2] ?? '8080';
+  const raw = process.env['PORT'] ?? process.argv[2] ?? '8080';
   const port = Number(raw);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Port must be an integer from 0 to 65535');
   const app = await startServer({ port });
   console.log(`Local preview: ${app.url}`);
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.once(signal, async () => {
-      await app.close();
-      process.exit(0);
+    process.once(signal, () => {
+      app.close().then(
+        () => process.exit(0),
+        (error: unknown) => {
+          console.error(error);
+          process.exit(1);
+        },
+      );
     });
   }
 }

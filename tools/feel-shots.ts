@@ -6,6 +6,7 @@ import { REGION_LOOKS } from '../src/regions.js';
 import { layoutWorld } from '../src/terrain.js';
 import { DAY } from '../src/sky.js';
 import { pickTimeOfDay } from '../src/sky.js';
+import { item } from '../src/item.js';
 
 /**
  * Review shots of the journey's feel: every region at two times of day, the three weather states, the night,
@@ -37,14 +38,14 @@ type Stats = Record<string, unknown> & {
   whaleHeading: number;
 };
 
-type CalmReview = {
+interface CalmReview {
   travel: (seconds: number) => void;
   setDay: (day: number) => void;
   setWeather: (state: 'clear' | 'hazy' | 'overcast') => void;
   setRoute: (on: boolean) => void;
   jumpTo: (x: number, z: number) => void;
   stats: () => Stats;
-};
+}
 
 const target = process.argv[2];
 if (!target) {
@@ -64,13 +65,13 @@ const call = <K extends Exclude<keyof CalmReview, 'stats'>>(page: Page, hook: K,
 const dayFor = (name: (typeof DAY)[number]) => (((DAY.indexOf(name) - start + DAY.length) % DAY.length) / DAY.length);
 
 /** For each region, the first point along the migration's lane well inside it. */
-function regionCentres(): Array<{ id: number; x: number; z: number }> {
+function regionCentres(): { id: number; x: number; z: number }[] {
   const { land } = layoutWorld(seed);
-  const out: Array<{ id: number; x: number; z: number }> = [];
+  const out: { id: number; x: number; z: number }[] = [];
   for (let id = 0; id < 4; id++) {
     for (let s = 0; s < 1_000_000; s += 2000) {
       const { x, z } = land.planet.laneCentre(s);
-      if (land.regions.weightsAt(x, z)[id]! > 0.9) {
+      if ((land.regions.weightsAt(x, z)[id] ?? 0) > 0.9) {
         out.push({ id, x, z });
         break;
       }
@@ -79,14 +80,14 @@ function regionCentres(): Array<{ id: number; x: number; z: number }> {
   return out;
 }
 
-const log: Array<Record<string, unknown>> = [];
+const log: Record<string, unknown>[] = [];
 const problems: string[] = [];
 const round = (v: number) => Math.round(v * 100) / 100;
 
 async function cruise(page: Page): Promise<Stats> {
   // Swim on until the whale is travelling at pace and at the surface, then let real frames settle.
   let s = await stats(page);
-  for (let i = 0; i < 40 && !(s.behavior === 'travel' && s.speed > 14 && (s.whale as number[])[1]! > -1.5); i++) {
+  for (let i = 0; i < 40 && !(s.behavior === 'travel' && s.speed > 14 && ((s['whale'] as number[])[1] ?? 0) > -1.5); i++) {
     await call(page, 'travel', 4);
     s = await stats(page);
   }
@@ -95,7 +96,9 @@ async function cruise(page: Page): Promise<Stats> {
 }
 
 async function settle(page: Page, ms = 6000): Promise<void> {
-  await page.waitForFunction(() => (window as unknown as { __calmReview: CalmReview }).__calmReview.stats().chunksPending === 0, undefined, { timeout: 60000 }).catch(() => {});
+  await page.waitForFunction(() => (window as unknown as { __calmReview: CalmReview }).__calmReview.stats().chunksPending === 0, undefined, { timeout: 60000 }).catch(() => {
+    // Settling is best effort: the shot is taken either way.
+  });
   await page.waitForTimeout(ms);
 }
 
@@ -113,7 +116,7 @@ async function shot(page: Page, device: DeviceProfile, label: string): Promise<v
 
 await withBrowser(async (browser, base) => {
   for (const device of [DESKTOP, MOBILE]) {
-    const { page, context, errors } = await openCalm(browser, base, device, { seed, query: { debug: '1' } });
+    const { page, context, errors } = await openCalm(browser, base, device, { seed, query: { debug: '1', frame: 'finish' } });
     try {
       await page.waitForTimeout(3000);
       // The opening, then the whale cruising near home.
@@ -131,7 +134,7 @@ await withBrowser(async (browser, base) => {
       await shot(page, device, 'cruise-start');
 
       for (const centre of regionCentres()) {
-        const name = REGION_LOOKS[centre.id]!.name.toLowerCase().replace(/\s+/g, '-');
+        const name = item(REGION_LOOKS, centre.id).name.toLowerCase().replace(/\s+/g, '-');
         await call(page, 'jumpTo', centre.x, centre.z);
         await call(page, 'setWeather', 'clear');
         await call(page, 'setDay', dayFor('afternoon'));

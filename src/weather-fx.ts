@@ -3,6 +3,7 @@ import { fork } from './rng.js';
 import { SEA_GLSL } from './ocean.js';
 import { SEA_WAVES } from './swell.js';
 import type { QualityTier } from './quality.js';
+import { DRAW_AS_AUTHORED_GLSL, SCENE_FROM_DISPLAY_GLSL, displayExposure } from './tone.js';
 
 /** Rain streaks and spray per tier: the most that can show, at full rain and the roughest sea. */
 export const FX_COUNTS: Record<QualityTier, { rain: number; spray: number }> = {
@@ -32,13 +33,13 @@ export function rainVelocity(wind: number, windAngle: number): [number, number, 
 export function stepRain(offset: number[], velocity: readonly number[], dt: number): number[] {
   const box = [RAIN_BOX.x, RAIN_BOX.y, RAIN_BOX.z];
   for (let i = 0; i < 3; i++) {
-    const at = (offset[i]! + velocity[i]! * dt) % box[i]!;
-    offset[i] = at < 0 ? at + box[i]! : at;
+    const at = ((offset[i] ?? 0) + (velocity[i] ?? 0) * dt) % (box[i] ?? 0);
+    offset[i] = at < 0 ? at + (box[i] ?? 0) : at;
   }
   return offset;
 }
 
-export type WeatherFxInput = {
+export interface WeatherFxInput {
   /** Render coordinates. */
   camera: THREE.PerspectiveCamera;
   /** Seconds; frozen under reduced motion. */
@@ -51,9 +52,9 @@ export type WeatherFxInput = {
   light: number;
   /** Drawing buffer height in pixels, for spray sizes. */
   height: number;
-};
+}
 
-export type WeatherFx = {
+export interface WeatherFx {
   /** Added to the scene (render coordinates). */
   group: THREE.Group;
   update: (input: WeatherFxInput) => void;
@@ -61,7 +62,7 @@ export type WeatherFx = {
   /** Draws made last frame. */
   draws: () => number;
   dispose: () => void;
-};
+}
 
 /**
  * Rain and wind-blown spray, each one draw computed on the GPU from a per-particle seed: rain as streaks that
@@ -93,6 +94,7 @@ export function createWeatherFx(seed: number, tier: QualityTier, waves: Float32A
     uVelocity: { value: new THREE.Vector3(0, -FALL, 0) },
     uAmount: { value: 0 },
     uLight: { value: 1 },
+    displayExposure,
   };
   const rainMaterial = new THREE.ShaderMaterial({
     name: 'rain',
@@ -118,8 +120,12 @@ export function createWeatherFx(seed: number, tier: QualityTier, waves: Float32A
     fragmentShader: /* glsl */ `
       uniform float uLight;
       varying float vAlpha;
+      ${SCENE_FROM_DISPLAY_GLSL}
       void main() {
         gl_FragColor = vec4( vec3( 0.62, 0.68, 0.74 ) * ( 0.15 + 0.85 * uLight ), vAlpha * 0.55 );
+        // Authored as sRGB values written straight to the screen.
+        gl_FragColor = sRGBTransferEOTF( gl_FragColor );
+        ${DRAW_AS_AUTHORED_GLSL}
       }`,
     transparent: true,
     depthWrite: false,
@@ -140,6 +146,7 @@ export function createWeatherFx(seed: number, tier: QualityTier, waves: Float32A
     uWind: { value: new THREE.Vector2(1, 0) },
     uSea: { value: 0 },
     uLight: { value: 1 },
+    displayExposure,
     uScale: { value: 400 },
     seaWaves: { value: waves },
   };
@@ -162,7 +169,7 @@ export function createWeatherFx(seed: number, tier: QualityTier, waves: Float32A
         vec2 cell = vec2( fract( puff.x + cycle * 0.618 ), fract( puff.y + cycle * 0.382 ) ) * ${SPRAY_BOX.toFixed(1)};
         vec2 base = uCentre.xz + mod( cell - uCentre.xz, ${SPRAY_BOX.toFixed(1)} ) - ${(SPRAY_BOX / 2).toFixed(1)};
         float top = 0.0;
-        for ( int i = 0; i < ${SEA_WAVES}; i++ ) top += seaWaves[ i ].z;
+        for ( int i = 0; i < ${String(SEA_WAVES)}; i++ ) top += seaWaves[ i ].z;
         float h = seaHeight( base, 0.0, 1e6 );
         float crest = smoothstep( 0.45, 0.8, h / max( top, 0.05 ) ) * smoothstep( 0.4, 0.85, uSea );
         vec3 world = vec3( base + uWind * life * 5.0, h + 0.2 + sin( life * 3.1416 ) * ( 0.6 + 1.4 * uSea ) );
@@ -174,10 +181,14 @@ export function createWeatherFx(seed: number, tier: QualityTier, waves: Float32A
     fragmentShader: /* glsl */ `
       uniform float uLight;
       varying float vAlpha;
+      ${SCENE_FROM_DISPLAY_GLSL}
       void main() {
         vec2 c = gl_PointCoord * 2.0 - 1.0;
         float disc = max( 0.0, 1.0 - dot( c, c ) );
         gl_FragColor = vec4( vec3( 0.86, 0.9, 0.92 ) * ( 0.12 + 0.88 * uLight ), disc * disc * vAlpha * 0.5 );
+        // Authored as sRGB values written straight to the screen.
+        gl_FragColor = sRGBTransferEOTF( gl_FragColor );
+        ${DRAW_AS_AUTHORED_GLSL}
       }`,
     transparent: true,
     depthWrite: false,

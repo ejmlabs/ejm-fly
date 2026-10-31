@@ -35,8 +35,8 @@ test('an hour of travel keeps tiles, navigation blocks, ship cells and caches in
   const peak = { tiles: 0, meshes: 0, triangles: 0, ready: 0, navTiles: 0, navBlocks: 0, shipCells: 0, ships: 0, plan: 0 };
   let px = course.x;
   let pz = course.z;
-  let vx = 0;
-  let vz = 0;
+  let vx: number;
+  let vz: number;
   let early = 0;
   for (let i = 0; i < 3600 / DT; i++) {
     pilot.step(course, DT, i * DT, land);
@@ -74,13 +74,13 @@ test('an hour of travel keeps tiles, navigation blocks, ship cells and caches in
   collect();
   const growth = (process.memoryUsage().heapUsed - early) / 1e6;
   // Tiles of open sea are empty entries; the ones that carry a rock or islet are drawn, and dissolve in and out.
-  assert.ok(peak.tiles < 480 && peak.ready <= 96, `land tiles ${peak.tiles}, ready ${peak.ready}`);
-  assert.ok(peak.meshes <= 200 && peak.triangles <= 60000, `land meshes ${peak.meshes}, triangles ${peak.triangles}`);
-  assert.ok(peak.navTiles <= 256 && peak.navBlocks <= 320, `nav tiles ${peak.navTiles}, blocks ${peak.navBlocks}`);
-  assert.ok(peak.shipCells <= 60 && peak.ships <= 120, `ship cells ${peak.shipCells}, ships ${peak.ships}`);
-  assert.ok(peak.plan <= 40000, `plan cache ${peak.plan}`);
+  assert.ok(peak.tiles < 480 && peak.ready <= 96, `land tiles ${String(peak.tiles)}, ready ${String(peak.ready)}`);
+  assert.ok(peak.meshes <= 200 && peak.triangles <= 60000, `land meshes ${String(peak.meshes)}, triangles ${String(peak.triangles)}`);
+  assert.ok(peak.navTiles <= 256 && peak.navBlocks <= 320, `nav tiles ${String(peak.navTiles)}, blocks ${String(peak.navBlocks)}`);
+  assert.ok(peak.shipCells <= 60 && peak.ships <= 120, `ship cells ${String(peak.shipCells)}, ships ${String(peak.ships)}`);
+  assert.ok(peak.plan <= 40000, `plan cache ${String(peak.plan)}`);
   assert.ok(growth < 50, `heap grew ${growth.toFixed(1)} MB between minute 10 and minute 60`);
-  assert.ok(recentres <= 3600 / 120 + 1, `${recentres} recentres in an hour`);
+  assert.ok(recentres <= 3600 / 120 + 1, `${String(recentres)} recentres in an hour`);
   stream.dispose();
   ships.dispose();
 }, 600000);
@@ -94,6 +94,6 @@ test('the first whale steps build no navigation tile once the opening ones are b
     land.nav.prefetch(course.x, course.z, OPENING_NAV_RADIUS, Infinity);
     const built = land.nav.stats().tiles;
     for (let i = 0; i < 3 * 30; i++) pilot.step(course, DT, i * DT, land);
-    assert.equal(land.nav.stats().tiles, built, `seed ${seed} built tiles in its first steps`);
+    assert.equal(land.nav.stats().tiles, built, `seed ${String(seed)} built tiles in its first steps`);
   }
 }, 60000);

@@ -3,17 +3,37 @@ import { Water } from 'three/addons/objects/Water.js';
 import { makeNoise4D, fbm4 } from './noise.js';
 import { hash } from './rng.js';
 import type { ShelfMap } from './land.js';
-import { SEA_WAVES, packWaves, seaLevel } from './swell.js';
+import { SEA_WAVES, SWELL_WAVES, WIND_WAVES, packWaves, seaLevel } from './swell.js';
+import { radianceFor } from './tone.js';
+import { patchShader, type ShaderPatch } from './shader-patch.js';
+import { GLSL_TILED_NOISE } from './underwater-glsl.js';
+import { item } from './item.js';
 
-export type OceanHandle = {
+/** Reflected land sits a touch darker than the land itself. */
+const REFLECTION_GAIN = 0.85;
+/** Sun glitter in scene light at a clear noon: the sparkle of single facets, and the sheen of the path they make. */
+const GLITTER = 70;
+const SHEEN = 1.6;
+/** The foam's lattice, in the wind's frame, repeats every this many metres (a power of two, so every octave tiles). */
+export const FOAM_PERIOD = 1024;
+/** Foam drifts downwind at half the speed of the long roller: crests run on through it and leave it behind them. */
+export const FOAM_DRIFT = 0.5 * item(WIND_WAVES, 0).speed;
+/** Where the long roller, which runs downwind, sits among the packed waves. */
+const ROLLER = SWELL_WAVES.length * 4;
+
+export interface OceanHandle {
   water: Water;
   mesh: THREE.Mesh;
   /** With a camera, the plane follows it (render space) while ripples stay fixed to the world. */
   update: (dt: number, sunDirection: THREE.Vector3, camera?: THREE.Camera) => void;
   /** The water's base colour (a region's look). */
   setWaterColor: (color: THREE.Color) => void;
-  /** The light of the day: haze colour that lifts dark reflections, and brightness (0 dark to 1 day) of the water, the shallows and the sun's glint. */
-  setSky: (haze: THREE.Color, light: number, shallowLight: number) => void;
+  /**
+   * The light of the day: the haze colour (display) that lifts dark reflections, at the output's exposure; brightness
+   * (0 dark to 1 day) of the water and of the shallows; and the sun's own strength (0 hidden to 1 clear), which
+   * sets its glitter.
+   */
+  setSky: (sky: { haze: THREE.Color; exposure: number; light: number; shallowLight: number; sun: number }) => void;
   /** World X/Z of render (0, 0); keeps ripples and shelf maps on the world after a recentre. */
   setOrigin: (x: number, z: number) => void;
   /** Swaps in shelf maps baked elsewhere in the world (maps are in world coordinates). */
@@ -24,9 +44,8 @@ export type OceanHandle = {
   setSea: (clock: number, wind: number, eyeY: number) => void;
   /** The swell as the water draws it, packed by `packWaves`; shared with what rides the crests. */
   waves: Float32Array;
-  setSize: (textureSize: number) => void;
   dispose: () => void;
-};
+}
 
 /** Seamless tiling normals via 4D simplex on a torus; heights first, then wrapped central differences. */
 function buildWaterNormals(seed: number, size = 256): THREE.DataTexture {
@@ -60,10 +79,10 @@ function buildWaterNormals(seed: number, size = 256): THREE.DataTexture {
   const slope = 1.2;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const hL = heights[y * size + ((x - 1 + size) % size)]!;
-      const hR = heights[y * size + ((x + 1) % size)]!;
-      const hD = heights[((y - 1 + size) % size) * size + x]!;
-      const hU = heights[((y + 1) % size) * size + x]!;
+      const hL = heights[y * size + ((x - 1 + size) % size)] ?? 0;
+      const hR = heights[y * size + ((x + 1) % size)] ?? 0;
+      const hD = heights[((y - 1 + size) % size) * size + x] ?? 0;
+      const hU = heights[((y + 1) % size) * size + x] ?? 0;
       let nx = (hL - hR) * slope;
       let ny = (hD - hU) * slope;
       let nz = 1;
@@ -97,14 +116,6 @@ export function createOcean(
     textureSize?: number;
     waterColor?: number;
     shelves?: { near: ShelfMap; far: ShelfMap; light?: number };
-    /** Horizon haze colour; scattered light lifts dark reflections toward it. */
-    reflectionHaze?: THREE.Color;
-    /**
-     * Gain for dark reflected land. The land is drawn without tone mapping but
-     * its reflection passes through the water's tone mapping, so it needs about
-     * 1 / exposure to match.
-     */
-    reflectionGain?: number;
   } = {},
 ): OceanHandle {
   const textureSize = options.textureSize ?? 256;
@@ -126,32 +137,48 @@ export function createOcean(
   water.rotation.x = -Math.PI / 2;
   water.position.y = 0;
 
-  const material = water.material as THREE.ShaderMaterial;
-  if (material.uniforms?.size) material.uniforms.size.value = 1.2;
-  if (material.uniforms?.distortionScale) material.uniforms.distortionScale.value = 4.2;
-  // Slightly muted water so the far plane fades into fog without a bright seam.
-  if (material.uniforms?.waterColor) material.uniforms.waterColor.value.set(0x1a4e68);
-  if (material.uniforms?.alpha) material.uniforms.alpha.value = 1.0;
-  if (material.uniforms?.sunColor) material.uniforms.sunColor.value.set(0xe8dcc0);
+  const material = water.material;
+  // three's own water uniforms, replaced by typed objects this module keeps. Slightly muted water so the far plane
+  // fades into fog without a bright seam.
+  const base = {
+    size: { value: 1.2 },
+    distortionScale: { value: 4.2 },
+    waterColor: { value: new THREE.Color(0x1a4e68) },
+    alpha: { value: 1 },
+    sunColor: { value: new THREE.Color(0xe8dcc0) },
+    sunDirection: { value: sunDirection.clone() },
+    time: { value: 0 },
+  };
+  Object.assign(material.uniforms, base);
 
-  const shelfTextures = applyWaterLook(material, options.shelves, options.reflectionHaze, options.reflectionGain ?? 1);
+  const look = applyWaterLook(material, options.shelves);
   const waves = new Float32Array(SEA_WAVES * 4);
-  applySea(material, geometry.userData['growth'] as number, waves);
+  const sea = applySea(material, typeof geometry.userData['growth'] === 'number' ? geometry.userData['growth'] : 0, waves);
   const maps = { near: options.shelves?.near, far: options.shelves?.far };
   const origin = { x: 0, z: 0 };
   let light = 1;
+  let foamClock = 0;
+
+  /** Lays the foam's lattice on the world: the origin and the drift, reduced to the period in float64 like the ripples. */
+  function anchorFoam(): void {
+    if (!sea) return;
+    const wind = sea.foamWind.value;
+    const wrap = (v: number) => v - Math.floor(v / FOAM_PERIOD) * FOAM_PERIOD;
+    sea.foamShift.value.set(wrap(wind.x * origin.x + wind.y * origin.z - FOAM_DRIFT * foamClock), wrap(wind.x * origin.z - wind.y * origin.x));
+  }
 
   function place(): void {
-    const uniforms = material.uniforms;
+    anchorFoam();
+    if (!look) return;
     // Ripple texture offsets for the origin, reduced to their period in float64 so the GPU never sees large numbers.
-    const size = uniforms.size?.value ?? 1;
     const fract = (v: number) => v - Math.floor(v);
-    const ox = origin.x * size;
-    const oz = origin.z * size;
-    uniforms.rippleShiftA?.value.set(fract(ox / 103), fract(oz / 103), fract(ox / 107), fract(oz / 107));
-    uniforms.rippleShiftB?.value.set(fract(ox / 8907), fract(oz / 9803), fract(ox / 1091), fract(oz / 1027));
-    if (maps.near && uniforms.shelfNearBounds) uniforms.shelfNearBounds.value.copy(shelfBounds(maps.near, origin));
-    if (maps.far && uniforms.shelfFarBounds) uniforms.shelfFarBounds.value.copy(shelfBounds(maps.far, origin));
+    const ox = origin.x * base.size.value;
+    const oz = origin.z * base.size.value;
+    look.rippleShiftA.value.set(fract(ox / 103), fract(oz / 103), fract(ox / 107), fract(oz / 107));
+    look.rippleShiftB.value.set(fract(ox / 8907), fract(oz / 9803), fract(ox / 1091), fract(oz / 1027));
+    if (!look.shelf) return;
+    if (maps.near) look.shelf.shelfNearBounds.value.copy(shelfBounds(maps.near, origin));
+    if (maps.far) look.shelf.shelfFarBounds.value.copy(shelfBounds(maps.far, origin));
   }
   place();
 
@@ -162,42 +189,44 @@ export function createOcean(
     waves,
     update(dt: number, sun: THREE.Vector3, camera?: THREE.Camera) {
       time += dt;
-      const uniforms = (water.material as THREE.ShaderMaterial).uniforms;
-      if (uniforms.time) uniforms.time.value = time * 0.35;
-      if (uniforms.sunDirection) uniforms.sunDirection.value.copy(sun).normalize();
+      base.time.value = time * 0.35;
+      base.sunDirection.value.copy(sun).normalize();
       if (camera) {
         water.position.x = camera.position.x;
         water.position.z = camera.position.z;
       }
     },
     setSea(clock: number, wind: number, eyeY: number) {
-      const uniforms = material.uniforms;
-      if (!uniforms.seaWaves) return;
+      if (!sea) return;
       packWaves(origin.x, origin.z, clock, waves);
       const level = seaLevel();
-      uniforms.seaLevel!.value = level;
-      uniforms.seaEye!.value = eyeY;
-      uniforms.seaChop!.value = 0.8 * level;
+      sea.seaLevel.value = level;
+      sea.seaEye.value = eyeY;
+      sea.seaChop.value = 0.8 * level;
       let top = 0;
-      for (let i = 0; i < SEA_WAVES; i++) top += waves[i * 4 + 2]!;
-      uniforms.seaTop!.value = top;
+      for (let i = 0; i < SEA_WAVES; i++) top += waves[i * 4 + 2] ?? 0;
+      sea.seaTop.value = top;
       // Wind roughens the ripples and streaks the reflections.
-      uniforms.rippleGain!.value = 1.5 + 1.6 * wind;
-      if (uniforms.distortionScale) uniforms.distortionScale.value = 4.2 + 3.5 * wind;
-      uniforms.foamLight!.value = light;
+      sea.rippleGain.value = 1.5 + 1.6 * wind;
+      base.distortionScale.value = 4.2 + 3.5 * wind;
+      sea.foamLight.value = light;
+      // The long roller runs downwind, and foam drifts with it.
+      sea.foamWind.value.set(waves[ROLLER] ?? 1, waves[ROLLER + 1] ?? 0).normalize();
+      foamClock = clock;
+      anchorFoam();
     },
     setWhale(x: number, y: number, z: number, heading: number) {
-      material.uniforms.whaleBody?.value.set(x, z, heading, y);
+      look?.whaleBody.value.set(x, z, heading, y);
     },
     setWaterColor(color: THREE.Color) {
-      material.uniforms.waterColor?.value.copy(color).multiplyScalar(light);
+      base.waterColor.value.copy(color).multiplyScalar(light);
     },
-    setSky(haze: THREE.Color, level: number, shallowLight: number) {
-      const uniforms = material.uniforms;
-      light = level;
-      uniforms.reflectionHaze?.value.copy(haze);
-      if (uniforms.shallowLight) uniforms.shallowLight.value = (options.shelves?.light ?? 1) * shallowLight;
-      if (uniforms.sunColor) uniforms.sunColor.value.set(0xe8dcc0).multiplyScalar(level);
+    setSky(sky) {
+      light = sky.light;
+      if (look) radianceFor(sky.haze, sky.exposure, look.reflectionHaze.value);
+      if (look?.shelf) look.shelf.shallowLight.value = (options.shelves?.light ?? 1) * sky.shallowLight;
+      base.sunColor.value.set(0xe8dcc0).multiplyScalar(sky.light);
+      if (sea) sea.glitter.value = sky.sun;
     },
     setOrigin(x: number, z: number) {
       origin.x = x;
@@ -205,34 +234,29 @@ export function createOcean(
       place();
     },
     setShelves(next: { near?: ShelfMap; far?: ShelfMap }) {
-      const uniforms = material.uniforms;
-      for (const which of ['near', 'far'] as const) {
-        const shelf = next[which];
-        const name = which === 'near' ? 'shelfNear' : 'shelfFar';
-        if (!shelf || !uniforms[name]) continue;
-        const old = uniforms[name].value as THREE.DataTexture;
-        const texture = shelfTexture(shelf);
-        uniforms[name].value = texture;
-        const at = shelfTextures.indexOf(old);
-        if (at >= 0) shelfTextures[at] = texture;
-        old.dispose();
-        maps[which] = shelf;
+      const shelf = look?.shelf;
+      if (!shelf) return;
+      if (next.near) {
+        shelf.shelfNear.value.dispose();
+        shelf.shelfNear.value = shelfTexture(next.near);
+        maps.near = next.near;
+      }
+      if (next.far) {
+        shelf.shelfFar.value.dispose();
+        shelf.shelfFar.value = shelfTexture(next.far);
+        maps.far = next.far;
       }
       place();
-    },
-    setSize(_textureSize: number) {
-      // Water render target size is fixed at construction; quality changes adjust DPR instead.
     },
     dispose() {
       geometry.dispose();
       normals.dispose();
-      for (const texture of shelfTextures) texture.dispose();
-      (water.material as THREE.Material).dispose();
-      const mirror = (water as unknown as { mirror?: THREE.WebGLRenderTarget }).mirror
-        ?? (water.material as THREE.ShaderMaterial).uniforms?.mirrorSampler?.value;
-      if (mirror && typeof (mirror as THREE.WebGLRenderTarget).dispose === 'function') {
-        (mirror as THREE.WebGLRenderTarget).dispose();
-      }
+      look?.shelf?.shelfNear.value.dispose();
+      look?.shelf?.shelfFar.value.dispose();
+      material.dispose();
+      // three's water keeps its mirror target to itself; its texture is reachable through the sampler.
+      const mirror: unknown = material.uniforms['mirrorSampler']?.value;
+      if (mirror instanceof THREE.Texture) mirror.dispose();
     },
   };
 }
@@ -292,10 +316,10 @@ export function seaGeometry(segments: number, rings: number, radius: number): TH
 
 /** The shared swell in GLSL: `seaWaves` as packed by `packWaves`. Height, and slope with short waves faded by distance. */
 export const SEA_GLSL = `
-  uniform vec4 seaWaves[ ${SEA_WAVES} ];
+  uniform vec4 seaWaves[ ${String(SEA_WAVES)} ];
   float seaHeight( vec2 p, float dist, float near ) {
     float h = 0.0;
-    for ( int i = 0; i < ${SEA_WAVES}; i++ ) {
+    for ( int i = 0; i < ${String(SEA_WAVES)}; i++ ) {
       vec4 w = seaWaves[ i ];
       float lambda = 6.2832 / length( w.xy );
       h += w.z * sin( dot( p, w.xy ) + w.w ) * ( 1.0 - smoothstep( lambda * near, lambda * near * 2.0, dist ) );
@@ -304,7 +328,7 @@ export const SEA_GLSL = `
   }
   vec3 seaSlope( vec2 p, float dist ) {
     vec3 s = vec3( 0.0 );
-    for ( int i = 0; i < ${SEA_WAVES}; i++ ) {
+    for ( int i = 0; i < ${String(SEA_WAVES)}; i++ ) {
       vec4 w = seaWaves[ i ];
       if ( w.z == 0.0 ) continue;
       float phase = dot( p, w.xy ) + w.w;
@@ -317,6 +341,48 @@ export const SEA_GLSL = `
 `;
 
 /**
+ * Foam texture at a point of the foam's lattice (the wind's frame, metres), seen through a pixel `reach` metres across
+ * and along the wind: octaves of value noise from 32 m across the wind down to 0.25 m, streaked downwind at the larger
+ * scales and bent by a slow warp so the streaks wander. An octave fades out once a pixel spans it and the rest are
+ * rescaled to keep their contrast, so distance thins the foam to its coarse patches and streaks instead of averaging it
+ * into a smooth sheet. Returns the texture (mean 0, spread near 1), the same for its octaves of 8 m and under, which
+ * breaks up a patch however coarse the rest is, and how much of the spread a pixel can still resolve (0 to about 0.9).
+ * `foamGusts` is the wind's wider patchiness, mean 0 and within about 0.5, which stays whatever the pixel spans: swell
+ * faces seen edge on have no texture to resolve, yet must not read as one flat grey.
+ */
+const FOAM_GLSL = `
+  ${GLSL_TILED_NOISE}
+  vec3 foamTexture( vec2 at, vec2 reach ) {
+    vec2 bend = vec2( 128.0, 32.0 );
+    at += 10.0 * ( vec2( tiledNoise( at / bend + 1.7, ${FOAM_PERIOD.toFixed(1)} / bend ), tiledNoise( at / bend.yx + 8.1, ${FOAM_PERIOD.toFixed(1)} / bend.yx ) ) - 0.5 );
+    vec2 sum = vec2( 0.0 );
+    vec2 variance = vec2( 0.0 );
+    float cell = 32.0;
+    float gain = 1.0;
+    for ( int i = 0; i < 8; i++ ) {
+      vec2 size = cell * vec2( cell > 3.0 ? 8.0 : ( cell > 1.5 ? 4.0 : ( cell > 0.9 ? 2.0 : 1.0 ) ), 1.0 );
+      vec2 spanned = smoothstep( 0.5, 1.5, reach / size );
+      float shown = gain * ( 1.0 - spanned.x ) * ( 1.0 - spanned.y );
+      if ( shown > 0.0 ) {
+        float octave = shown * ( tiledNoise( at / size + float( i ) * 7.31, ${FOAM_PERIOD.toFixed(1)} / size ) - 0.5 );
+        vec2 part = vec2( 1.0, cell < 9.0 ? 1.0 : 0.0 );
+        sum += part * octave;
+        variance += part * shown * shown / 12.0;
+      }
+      cell *= 0.5;
+      gain *= 0.9;
+    }
+    vec2 spread = inversesqrt( variance + 0.015 );
+    return vec3( sum * spread, variance.x / ( variance.x + 0.015 ) );
+  }
+  float foamGusts( vec2 at ) {
+    vec2 wide = vec2( 128.0, 32.0 );
+    vec2 fine = vec2( 64.0, 16.0 );
+    return 0.6 * tiledNoise( at / wide + 4.1, ${FOAM_PERIOD.toFixed(1)} / wide ) + 0.4 * tiledNoise( at / fine + 9.7, ${FOAM_PERIOD.toFixed(1)} / fine ) - 0.5;
+  }
+`;
+
+/**
  * The swell on the water: the vertices rise with it while the rings are fine enough to draw a wave (each fades by its
  * wavelength), the ripples tilt with its slope out to the horizon, and rough crests break white.
  */
@@ -325,7 +391,7 @@ const seaVertexPatches: ShaderPatch[] = [
 				uniform float seaEye;
 				uniform float seaGrid;
 				uniform float seaChop;
-				uniform vec4 seaWaves[ ${SEA_WAVES} ];` },
+				uniform vec4 seaWaves[ ${String(SEA_WAVES)} ];` },
   {
     find: 'mirrorCoord = modelMatrix * vec4( position, 1.0 );',
     replace: `mirrorCoord = modelMatrix * vec4( position, 1.0 );
@@ -335,7 +401,7 @@ const seaVertexPatches: ShaderPatch[] = [
 						float seaDist = length( mirrorCoord.xz - cameraPosition.xz );
 						vec2 seaAt = mirrorCoord.xz;
 						float seaH = 0.0;
-						for ( int i = 0; i < ${SEA_WAVES}; i++ ) {
+						for ( int i = 0; i < ${String(SEA_WAVES)}; i++ ) {
 							vec4 w = seaWaves[ i ];
 							if ( w.z == 0.0 ) continue;
 							float k = length( w.xy );
@@ -359,15 +425,24 @@ const seaFragmentPatches: ShaderPatch[] = [
     replace: 'vec2 distortion = surfaceNormal.xz * ( 0.0016 + min( 1.3 / distance, 0.012 ) ) * distortionScale * vec2( 1.0, 1.7 ) * ( 1.0 + 2.0 * seaLevel );',
   },
   {
-    find: 'reflectionSample = mix( reflectionSample, reflectionHaze * reflectionGain, reflectionLift * reflectionDark );',
-    replace: `reflectionSample = mix( reflectionSample, reflectionHaze * reflectionGain, reflectionLift * reflectionDark );
-      reflectionSample = mix( reflectionSample, reflectionHaze, 0.85 * smoothstep( 0.15, 0.85, seaLevel ) );`,
+    find: 'reflectionSample = mix( reflectionSample, reflectionHaze, reflectionLift * reflectionDark );',
+    replace: `reflectionSample = mix( reflectionSample, reflectionHaze, reflectionLift * reflectionDark );
+      // Rough water mirrors a blur of the sky: swell faces turned toward the eye catch the higher, darker sky and faces
+      // turned away the bright horizon, so each swell reads as light and shade instead of one flat grey. The eye mostly
+      // sees faces turned toward it, so the tone pivots on their usual tilt (0.1) and the sea keeps its overall brightness.
+      float roughSky = smoothstep( 0.15, 0.85, seaLevel );
+      float facing = dot( -sea.xy, normalize( eyeDirection.xz ) );
+      reflectionSample = mix( reflectionSample, reflectionHaze * mix( 1.0, clamp( 1.0 - 2.0 * ( facing - 0.1 ), 0.75, 1.35 ), roughSky ), 0.85 * roughSky );`,
   },
   { find: 'vec4 getNoise( vec2 uv ) {', replace: `uniform float rippleGain;
 				uniform float seaLevel;
 				uniform float foamLight;
 				uniform float seaTop;
+				uniform float glitter;
+				uniform vec2 foamWind;
+				uniform vec2 foamShift;
 				${SEA_GLSL}
+				${FOAM_GLSL}
 				vec4 getNoise( vec2 uv ) {` },
   {
     find: 'vec3 surfaceNormal = normalize( noise.xzy * vec3( 1.5, 1.0, 1.5 ) );',
@@ -379,53 +454,71 @@ const seaFragmentPatches: ShaderPatch[] = [
   {
     find: 'vec3 outgoingLight = albedo;',
     replace: `{
-        // Whitecaps: rough crests break, ragged by the ripples; wind streaks the foam between them in a gale.
-        float crest = sea.z / max( seaTop, 0.05 ) + 0.3 * noise.x;
-        float foam = smoothstep( 0.2, 0.75, crest ) * smoothstep( 0.35, 0.8, seaLevel );
-        foam += 0.3 * smoothstep( 0.75, 1.0, seaLevel ) * smoothstep( 0.4, 1.0, noise.z * 0.5 + crest * 0.5 );
-        foam *= 1.0 - smoothstep( 250.0, 1800.0, seaDist );
-        albedo = mix( albedo, vec3( 0.78, 0.84, 0.86 ) * ( 0.12 + 0.88 * foamLight ), clamp( foam * foam * 1.4, 0.0, 0.7 ) );
+        // Sun glitter: ripple facets that mirror the sun flash past the white point, a sheen gathers them into a path,
+        // and the bloom carries both. Cloud over the sun and the night take it away.
+        vec3 toSun = normalize( sunDirection + eyeDirection );
+        float facet = max( 0.0, dot( surfaceNormal, toSun ) );
+        float low = smoothstep( -0.02, 0.08, sunDirection.y );
+        albedo += sunColor * glitter * low * ( ${GLITTER.toFixed(1)} * pow( facet, 1400.0 ) + ${SHEEN.toFixed(1)} * pow( facet, 160.0 ) );
+      }
+      vec3 outgoingLight = albedo;`,
+  },
+  {
+    find: 'vec3 outgoingLight = albedo;',
+    replace: `if ( seaLevel > 0.3 ) {
+        // Whitecaps break on rough crests as lace and patches, streaked downwind. Their texture sits on a lattice fixed to
+        // the world (foamShift), not on the ripples, which a distant pixel averages into a flat sheet.
+        vec2 foamAt = vec2( dot( worldPosition.xz, foamWind ), dot( worldPosition.xz, vec2( -foamWind.y, foamWind.x ) ) ) + foamShift;
+        // A pixel on a swell face seen edge on spans tens of metres: past a few metres more would only be averaged flat, so
+        // the patches stay and shimmer instead, and the foam thins out with distance.
+        vec3 grain = foamTexture( foamAt, min( fwidth( foamAt ), vec2( 4.0 ) ) );
+        float lace = grain.x;
+        float fine = grain.y;
+        float rough = smoothstep( 0.3, 0.8, seaLevel );
+        float resolved = smoothstep( 0.15, 0.6, grain.z ) * ( 1.0 - smoothstep( 300.0, 1000.0, seaDist ) );
+        float edge = mix( 1.0, 0.35, rough );
+        float caps = smoothstep( edge, edge + 0.6, 0.8 * sea.z / max( seaTop, 0.05 ) + 0.45 * lace + 0.4 * fine ) * rough * resolved;
+        // A gale also thins foam out over the water between the caps.
+        float film = 0.3 * smoothstep( 0.6, 1.0, seaLevel ) * smoothstep( -0.3, 0.9, lace ) * resolved;
+        float foam = 1.0 - ( 1.0 - caps ) * ( 1.0 - film );
+        // Thick foam is whiter than thin.
+        vec3 foamColor = vec3( 0.78, 0.84, 0.86 ) * ( 0.12 + 0.88 * foamLight ) * ( 0.5 + 0.5 * smoothstep( -1.5, 2.0, fine ) );
+        // Gusts roughen the water in patches, which lighten and darken what it mirrors.
+        albedo *= 1.0 + 0.8 * reflectance * rough * foamGusts( foamAt );
+        albedo = mix( albedo, foamColor, 0.85 * foam );
       }
       vec3 outgoingLight = albedo;`,
   },
 ];
 
 /** Adds the swell to a (possibly already patched) Water material; all or nothing, as `applyWaterLook`. */
-function applySea(material: THREE.ShaderMaterial, growth: number, waves: Float32Array): void {
+function applySea(material: THREE.ShaderMaterial, growth: number, waves: Float32Array) {
   const vertex = patchShader(material.vertexShader, seaVertexPatches);
   const fragment = patchShader(material.fragmentShader, seaFragmentPatches);
   if (vertex === null || fragment === null) {
     const message = 'ejm-calm: Water shader did not match the expected source; the water stays flat.';
     if (import.meta.env.DEV) throw new Error(message);
     console.warn(message);
-    return;
+    return null;
   }
+  const sea = {
+    seaWaves: { value: waves },
+    seaLevel: { value: 0 },
+    seaEye: { value: 0 },
+    seaGrid: { value: growth },
+    seaChop: { value: 0 },
+    seaTop: { value: 0 },
+    rippleGain: { value: 1.5 },
+    foamLight: { value: 1 },
+    glitter: { value: 1 },
+    foamWind: { value: new THREE.Vector2(1, 0) },
+    foamShift: { value: new THREE.Vector2() },
+  };
   material.vertexShader = vertex;
   material.fragmentShader = fragment;
-  material.uniforms.seaWaves = { value: waves };
-  material.uniforms.seaLevel = { value: 0 };
-  material.uniforms.seaEye = { value: 0 };
-  material.uniforms.seaGrid = { value: growth };
-  material.uniforms.seaChop = { value: 0 };
-  material.uniforms.seaTop = { value: 0 };
-  material.uniforms.rippleGain = { value: 1.5 };
-  material.uniforms.foamLight = { value: 1 };
+  Object.assign(material.uniforms, sea);
   material.needsUpdate = true;
-}
-
-export type ShaderPatch = { find: string; replace: string };
-
-/**
- * Applies every patch to a shader source, or returns null if any target text is
- * missing, so a three.js upgrade can never leave a half-patched shader.
- */
-export function patchShader(source: string, patches: readonly ShaderPatch[]): string | null {
-  let out = source;
-  for (const patch of patches) {
-    if (!out.includes(patch.find)) return null;
-    out = out.replace(patch.find, () => patch.replace);
-  }
-  return out;
+  return sea;
 }
 
 /** Calm, slightly rough water: reflections streak and lift toward the haze instead of mirroring dark land. */
@@ -442,8 +535,7 @@ const reflectionPatches: ShaderPatch[] = [
     find: 'uniform vec3 waterColor;',
     replace: `uniform vec3 waterColor;
       uniform vec3 reflectionHaze;
-      uniform float reflectionLift;
-      uniform float reflectionGain;`,
+      uniform float reflectionLift;`,
   },
   {
     find: 'vec2 distortion = surfaceNormal.xz * ( 0.001 + 1.0 / distance ) * distortionScale;',
@@ -457,8 +549,8 @@ const reflectionPatches: ShaderPatch[] = [
       // Skylight scattered off the ripples lifts dark reflected land; bright sky stays as it is.
       float reflectionLuma = dot( reflectionSample, vec3( 0.2126, 0.7152, 0.0722 ) );
       float reflectionDark = 1.0 - smoothstep( 0.05, 0.6, reflectionLuma );
-      reflectionSample *= mix( 1.0, reflectionGain, reflectionDark );
-      reflectionSample = mix( reflectionSample, reflectionHaze * reflectionGain, reflectionLift * reflectionDark );`,
+      reflectionSample *= mix( 1.0, ${REFLECTION_GAIN.toFixed(2)}, reflectionDark );
+      reflectionSample = mix( reflectionSample, reflectionHaze, reflectionLift * reflectionDark );`,
   },
 ];
 
@@ -532,12 +624,11 @@ function shelfPatches(): ShaderPatch[] {
       // strong where the view is steep, gone at grazing angles and with distance.
       // The camera sits a few metres up, so everything past ~100 m crowds into a thin band
       // above the horizon: keep a soft, capped grazing wash there so it never reads as a stripe.
-      float facing = mix( 0.15, 1.0, smoothstep( 0.002, 0.04, eyeDirection.y ) );
-      float nearby = 1.0 - smoothstep( 300.0, 1400.0, distance );
-      float shelfMix = ( shallow * 0.9 + slope * 0.35 ) * facing * nearby * ( 1.0 - reflectance * 0.6 );
-      shelfMix = min( shelfMix, mix( 0.25, 0.8, smoothstep( 0.002, 0.04, eyeDirection.y ) ) );
-      // HDR so the turquoise survives the scene's low exposure.
-      vec3 under = mix( shelfColor, shallowColor, shallow ) * shallowLight * 2.1;
+      float steep = smoothstep( 0.004, 0.08, eyeDirection.y );
+      float nearby = 1.0 - smoothstep( 150.0, 900.0, distance );
+      float shelfMix = ( shallow * 0.9 + slope * 0.2 ) * steep * nearby * ( 1.0 - reflectance * 0.6 );
+      // Light up through the shallows, in scene light so the turquoise survives the scene's low exposure.
+      vec3 under = mix( shelfColor, shallowColor, shallow ) * shallowLight * 1.5;
       albedo = mix( albedo, under, clamp( shelfMix, 0.0, 0.8 ) );
       vec3 outgoingLight = albedo;`,
     },
@@ -552,35 +643,37 @@ function shelfPatches(): ShaderPatch[] {
 function applyWaterLook(
   material: THREE.ShaderMaterial,
   shelves: { near: ShelfMap; far: ShelfMap; light?: number } | undefined,
-  haze: THREE.Color | undefined,
-  gain: number,
-): THREE.DataTexture[] {
+) {
   const patched = patchShader(material.fragmentShader, [...reflectionPatches, ...(shelves ? shelfPatches() : []), ...whalePatches]);
   if (patched === null) {
     const message = 'ejm-calm: Water shader did not match the expected source; using the stock water.';
     if (import.meta.env.DEV) throw new Error(message);
     console.warn(message);
-    return [];
+    return null;
   }
+  const look = {
+    rippleShiftA: { value: new THREE.Vector4() },
+    rippleShiftB: { value: new THREE.Vector4() },
+    // Far below the floor until the first setWhale, so nothing shows.
+    whaleBody: { value: new THREE.Vector4(0, 0, 0, -1e4) },
+    // The haze in scene light, set with the sky each frame.
+    reflectionHaze: { value: new THREE.Color() },
+    reflectionLift: { value: 0.25 },
+    shelf: shelves
+      ? {
+          shelfNear: { value: shelfTexture(shelves.near) },
+          shelfFar: { value: shelfTexture(shelves.far) },
+          shelfNearBounds: { value: shelfBounds(shelves.near, { x: 0, z: 0 }) },
+          shelfFarBounds: { value: shelfBounds(shelves.far, { x: 0, z: 0 }) },
+          shallowColor: { value: new THREE.Color(0x58aaa0) },
+          shelfColor: { value: new THREE.Color(0x1d6f7c) },
+          shallowLight: { value: shelves.light ?? 1 },
+        }
+      : null,
+  };
   material.fragmentShader = patched;
-  material.uniforms.rippleShiftA = { value: new THREE.Vector4() };
-  material.uniforms.rippleShiftB = { value: new THREE.Vector4() };
-  // Far below the floor until the first setWhale, so nothing shows.
-  material.uniforms.whaleBody = { value: new THREE.Vector4(0, 0, 0, -1e4) };
-  material.uniforms.reflectionHaze = { value: (haze ?? new THREE.Color(0x8a9aa4)).clone() };
-  material.uniforms.reflectionLift = { value: 0.25 };
-  material.uniforms.reflectionGain = { value: Number.isFinite(gain) ? Math.min(3, Math.max(1, gain)) : 1 };
+  const { shelf, ...uniforms } = look;
+  Object.assign(material.uniforms, uniforms, shelf);
   material.needsUpdate = true;
-  if (!shelves) return [];
-
-  const near = shelfTexture(shelves.near);
-  const far = shelfTexture(shelves.far);
-  material.uniforms.shelfNear = { value: near };
-  material.uniforms.shelfFar = { value: far };
-  material.uniforms.shelfNearBounds = { value: shelfBounds(shelves.near, { x: 0, z: 0 }) };
-  material.uniforms.shelfFarBounds = { value: shelfBounds(shelves.far, { x: 0, z: 0 }) };
-  material.uniforms.shallowColor = { value: new THREE.Color(0x58aaa0) };
-  material.uniforms.shelfColor = { value: new THREE.Color(0x1d6f7c) };
-  material.uniforms.shallowLight = { value: shelves.light ?? 1 };
-  return [near, far];
+  return look;
 }

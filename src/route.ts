@@ -1,7 +1,7 @@
 /** Seconds the indicator stays after a region change before it fades. */
 export const ROUTE_SECONDS = 6;
 
-export type RouteIndicator = {
+export interface RouteIndicator {
   /** Whether the indicator is showing, and what it says: the region and the distance swum. */
   readonly visible: boolean;
   readonly text: string;
@@ -9,11 +9,11 @@ export type RouteIndicator = {
   setEnabled: (on: boolean, region: number, metres: number, show?: boolean) => void;
   /** Call every frame: a change of region brings it in, and ROUTE_SECONDS later it goes. */
   update: (dt: number, region: number, metres: number) => void;
-};
+}
 
 const label = (name: string, metres: number): string => {
   const km = metres / 1000;
-  return `${name} · ${km < 100 ? km.toFixed(1) : Math.round(km)} km`;
+  return `${name} · ${String(km < 100 ? km.toFixed(1) : Math.round(km))} km`;
 };
 
 /** The route indicator's state, apart from the page: off until asked for, in on a region change, out after six seconds. */

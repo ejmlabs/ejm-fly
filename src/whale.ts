@@ -39,11 +39,14 @@ import {
 } from './whale-motion.js';
 import { createWhaleSkin } from './whale-skin.js';
 import { DEPTH_SCALE, LENGTH_SCALE, WHALE_LENGTH } from './whale-size.js';
+import { item } from './item.js';
 
 export type { WhalePhase } from './whale-motion.js';
 export type { WhaleBehavior } from './whale-behavior.js';
+import { context2d } from './canvas.js';
+import { drawAsAuthored } from './tone.js';
 
-export type WhaleState = {
+export interface WhaleState {
   phase: WhalePhase;
   phaseT: number;
   behavior: WhaleBehavior;
@@ -57,9 +60,9 @@ export type WhaleState = {
   roll: number;
   spout: number;
   splash: number;
-};
+}
 
-export type WhaleHandle = {
+export interface WhaleHandle {
   group: THREE.Group;
   state: WhaleState;
   update: (dt: number, time: number, shore: Shore) => void;
@@ -74,9 +77,9 @@ export type WhaleHandle = {
   /** Detail level currently drawn by the LOD. */
   detail: () => WhaleDetail;
   dispose: () => void;
-};
+}
 
-export type WhaleOptions = {
+export interface WhaleOptions {
   tier?: QualityTier;
   /** Starting heading; defaults to a seeded random one. */
   heading?: number;
@@ -84,7 +87,7 @@ export type WhaleOptions = {
   journey?: number;
   /** Seafloor height (negative under water): the whale keeps FLOOR_CLEARANCE above it and feeds over it. */
   floorAt?: (x: number, z: number) => number;
-};
+}
 
 /** Base stroke frequency (Hz): slow, heavy beats, slower the bigger the animal (about 0.2 Hz for a blue whale). */
 const STROKE_HZ = 0.3 / Math.sqrt(LENGTH_SCALE);
@@ -112,7 +115,7 @@ function softCircleTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = context2d(canvas);
   const gradient = ctx.createRadialGradient(32, 32, 2, 32, 32, 30);
   gradient.addColorStop(0, 'rgba(255,255,255,0.9)');
   gradient.addColorStop(0.35, 'rgba(238,244,248,0.5)');
@@ -130,7 +133,7 @@ function dropletTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = context2d(canvas);
   const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 30);
   gradient.addColorStop(0, 'rgba(255,255,255,1)');
   gradient.addColorStop(0.45, 'rgba(255,255,255,0.85)');
@@ -153,7 +156,7 @@ function foamTexture(seed: number, channel: number, rim = 0): THREE.CanvasTextur
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = context2d(canvas);
   const image = ctx.createImageData(size, size);
   const noise = makeNoise2D(seed, channel);
   for (let y = 0; y < size; y++) {
@@ -186,7 +189,7 @@ function streakTexture(seed: number): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = context2d(canvas);
   const image = ctx.createImageData(w, h);
   const noise = makeNoise2D(seed, 77);
   for (let y = 0; y < h; y++) {
@@ -215,7 +218,7 @@ function mistTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = context2d(canvas);
   const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
   gradient.addColorStop(0, 'rgba(255,255,255,0.85)');
   gradient.addColorStop(0.35, 'rgba(255,255,255,0.28)');
@@ -264,41 +267,37 @@ export function createWhale(seed: number, home: { x: number; z: number }, option
     if (idle) idle(upgrade, { timeout: 4000 });
     else setTimeout(upgrade, 1500);
   }
-  // Wet skin: a thin clear coat carries the sky's sheen over the dark back, and a soft sheen
-  // lifts the silhouette at grazing angles so the body still reads at dusk and at night.
-  // Phones keep the cheaper standard material.
+  // Dark wet skin. A dark body reflects the bright sky at the grazing angles the chase camera sees it from, which
+  // reads as a glassy capsule, so the reflection is held down: the physical material weakens it (specularIntensity)
+  // and keeps a faint grey sheen for the silhouette at dusk and at night; the standard material of phones cannot,
+  // so it is rougher instead. There is no envMapIntensity: a material without its own envMap takes the scene's
+  // environment at the scene's intensity.
   const surface = {
     map: skin.map,
     normalMap: skin.normalMap,
     normalScale: new THREE.Vector2(0.9, 0.9),
-    roughness: 0.42,
     metalness: 0,
-    envMapIntensity: 0.6,
   };
   const material =
     tier === 'low'
-      ? new THREE.MeshStandardMaterial(surface)
+      ? new THREE.MeshStandardMaterial({ ...surface, roughness: 0.9 })
       : new THREE.MeshPhysicalMaterial({
           ...surface,
-          clearcoat: 0.35,
-          clearcoatRoughness: 0.32,
-          sheen: 0.35,
+          roughness: 0.4,
+          specularIntensity: 0.3,
+          sheen: 0.2,
           sheenRoughness: 0.6,
-          sheenColor: new THREE.Color(0x7d93a4),
+          sheenColor: new THREE.Color(0x9aa6ae),
         });
 
   const bones = createWhaleBones();
-  body.add(bones[ROOT_BONE]!);
+  body.add(item(bones, ROOT_BONE));
   body.updateMatrixWorld(true);
   const skeleton = new THREE.Skeleton(bones);
-  const restFlip = [
-    flipperQuaternion(1, FLIPPER_DROOP, FLIPPER_SWEEP, 0),
-    flipperQuaternion(-1, FLIPPER_DROOP, FLIPPER_SWEEP, 0),
-  ];
 
   // LOD levels share one skeleton; only one level draws per frame.
   const lod = new THREE.LOD();
-  const levels: Array<{ detail: WhaleDetail; mesh: THREE.SkinnedMesh }> = [];
+  const levels: { detail: WhaleDetail; mesh: THREE.SkinnedMesh }[] = [];
   for (const level of WHALE_LOD[tier]) {
     const { geometry } = buildWhaleGeometry(level.detail);
     const mesh = new THREE.SkinnedMesh(geometry, material);
@@ -376,7 +375,7 @@ export function createWhale(seed: number, home: { x: number; z: number }, option
   washPivot.visible = false;
   group.add(washPivot);
 
-  type Spray = { sprite: THREE.Sprite; kind: 'crown' | 'drop' | 'mist'; angle: number; out: number; up: number; size: number };
+  interface Spray { sprite: THREE.Sprite; kind: 'crown' | 'drop' | 'mist'; angle: number; out: number; up: number; size: number }
   const CROWN_N = 34;
   const DROP_N = 16;
   const MIST_N = 3;
@@ -391,9 +390,9 @@ export function createWhale(seed: number, home: { x: number; z: number }, option
       transparent: true,
       opacity: 0,
       depthWrite: false,
-      // White water should stay white; tone mapping greys it out against the sky.
-      toneMapped: kind === 'mist',
     });
+    // White water stays white, authored as it should look on screen; the mist is lit like the air.
+    if (kind !== 'mist') drawAsAuthored(mat);
     const sprite = new THREE.Sprite(mat);
     // Streaks stand on the water: anchor the sprite at its base.
     if (kind === 'crown') sprite.center.set(0.5, 0);
@@ -416,7 +415,7 @@ export function createWhale(seed: number, home: { x: number; z: number }, option
   const SHEET_N = 8;
   const sheet = new THREE.Group();
   sheet.visible = false;
-  const sheetSprites: Array<{ sprite: THREE.Sprite; x: number; y: number; z: number; speed: number }> = [];
+  const sheetSprites: { sprite: THREE.Sprite; x: number; y: number; z: number; speed: number }[] = [];
   for (let i = 0; i < SHEET_N; i++) {
     const r = (k: number) => hash(seed, i, k, 'sheet') / 0x100000000;
     const mat = new THREE.SpriteMaterial({ map: streakTex, color: 0xf2f7f9, transparent: true, opacity: 0, depthWrite: false });
@@ -472,13 +471,13 @@ export function createWhale(seed: number, home: { x: number; z: number }, option
     // Into a turn the body curves along its length: head and tail both toward the inside.
     const turn = clamp(motion.turn / WHALE_MAX_TURN_RATE, -1, 1);
     // Spine order in SPINE: H2, H1, B0, B1..B5.
-    bones[1]!.rotation.set(0, TURN_BEND * 0.8 * turn, angles.head[0]!);
-    bones[0]!.rotation.set(0, TURN_BEND * 0.6 * turn, angles.head[1]!);
-    for (let i = 0; i < 5; i++) bones[3 + i]!.rotation.set(0, -TURN_BEND * TURN_TAIL[i]! * turn, angles.tail[i]!);
+    item(bones, 1).rotation.set(0, TURN_BEND * 0.8 * turn, angles.head[0] ?? 0);
+    item(bones, 0).rotation.set(0, TURN_BEND * 0.6 * turn, angles.head[1] ?? 0);
+    for (let i = 0; i < 5; i++) item(bones, 3 + i).rotation.set(0, -TURN_BEND * (TURN_TAIL[i] ?? 0) * turn, angles.tail[i] ?? 0);
     // Flukes trail the stroke and tip up through the dive.
-    bones[FLUKE_BONE]!.rotation.z += p.arch * 0.1;
+    item(bones, FLUKE_BONE).rotation.z += p.arch * 0.1;
     // The blades flex after the peduncle turns, so each stroke ends with the tips following through.
-    bones[FLUKE_FLEX]!.rotation.set(0, 0, FLUKE_FLEX_AMP * p.stroke * Math.sin(strokePhase - FLUKE_LAG));
+    item(bones, FLUKE_FLEX).rotation.set(0, 0, FLUKE_FLEX_AMP * p.stroke * Math.sin(strokePhase - FLUKE_LAG));
 
     // Flippers scull with the stroke and spread wide in the air; into a turn the inside one
     // drops and reaches forward and the outside one lifts, steering with them.
@@ -492,9 +491,9 @@ export function createWhale(seed: number, home: { x: number; z: number }, option
         0.12 * sweep,
         tmpQ,
       );
-      bones[index]!.quaternion.copy(tmpQ);
+      item(bones, index).quaternion.copy(tmpQ);
       // The outer half bends behind the inner half's sweep.
-      bones[tip]!.rotation.set(side * 0.14 * Math.sin(strokePhase + 1.1 - FLIPPER_LAG) * p.stroke, 0, 0);
+      item(bones, tip).rotation.set(side * 0.14 * Math.sin(strokePhase + 1.1 - FLIPPER_LAG) * p.stroke, 0, 0);
     }
   }
 
@@ -555,12 +554,12 @@ export function createWhale(seed: number, home: { x: number; z: number }, option
     },
     measure() {
       body.updateMatrixWorld(true);
-      const mesh = levels[Math.max(0, lod.getCurrentLevel())]!.mesh;
+      const mesh = item(levels, Math.max(0, lod.getCurrentLevel())).mesh;
       skeleton.update();
       return new THREE.Box3().setFromObject(mesh, true).getSize(new THREE.Vector3());
     },
     detail() {
-      return levels[Math.max(0, lod.getCurrentLevel())]!.detail;
+      return item(levels, Math.max(0, lod.getCurrentLevel())).detail;
     },
     dispose() {
       for (const level of levels) level.mesh.geometry.dispose();
@@ -619,8 +618,8 @@ export function createWhale(seed: number, home: { x: number; z: number }, option
     spoutHeld = !rising;
     const columnH = lerp(0.4, BLOW_HEIGHT, rise);
     for (let i = 0; i < spoutSprites.length; i++) {
-      const sprite = spoutSprites[i]!;
-      const mat = sprite.material as THREE.SpriteMaterial;
+      const sprite = item(spoutSprites, i);
+      const mat = sprite.material;
       const u = i / Math.max(1, spoutSprites.length - 1);
       const jx = hash(seed, i, 1, 'spout') / 0x100000000 - 0.5;
       const jz = hash(seed, i, 2, 'spout') / 0x100000000 - 0.5;
@@ -654,7 +653,7 @@ export function createWhale(seed: number, home: { x: number; z: number }, option
     if (sheet.visible) {
       const a = splashFx.sheetAge;
       for (const s of sheetSprites) {
-        const mat = s.sprite.material as THREE.SpriteMaterial;
+        const mat = s.sprite.material;
         s.sprite.position.set(s.x + s.speed * a, s.y, s.z);
         s.sprite.scale.set(0.5 * LENGTH_SCALE, (1.6 + a * 1.5) * LENGTH_SCALE, 1);
         mat.opacity = 0.85 * (1 - smoothstep(0.3, 1.1, a));
@@ -666,7 +665,7 @@ export function createWhale(seed: number, home: { x: number; z: number }, option
     spray.position.set(splashFx.x, 0, splashFx.z);
     const lift = exit ? 0.45 : 1;
     for (const s of sprays) {
-      const mat = s.sprite.material as THREE.SpriteMaterial;
+      const mat = s.sprite.material;
       if (s.kind === 'mist' && exit) {
         mat.opacity = 0;
         continue;

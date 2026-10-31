@@ -18,7 +18,7 @@ test('the depth field is the distance to the nearest land, clamped at its reach'
   for (const [x, z] of [[2000, -1500], [2600, -1500], [0, 0], [-6000, 1000], [-9000, 9000], [12000, -12000], [29000, 30500]] as const) {
     const expected = Math.min(6000, trueDistance(x, z));
     // A lattice point counts as land within about 200 m of the shore (the land threshold), give or take a cell.
-    assert.ok(Math.abs(field.coastDistanceAt(x, z) - Math.max(0, expected - 200)) < 250, `${x},${z}: ${field.coastDistanceAt(x, z)} vs ${expected}`);
+    assert.ok(Math.abs(field.coastDistanceAt(x, z) - Math.max(0, expected - 200)) < 250, `${String(x)},${String(z)}: ${String(field.coastDistanceAt(x, z))} vs ${String(expected)}`);
   }
   assert.equal(field.coastDistanceAt(NaN, 0), 6000);
 });
@@ -54,6 +54,6 @@ test('the open sea of the journey deepens off every shore without a cliff', () =
     prev = wet ? y : NaN;
     deepest = Math.max(deepest, -y);
   }
-  assert.ok(worst < 40, `steepest 50 m step ${worst} m`);
-  assert.ok(deepest > 300, `deepest ${deepest} m`);
+  assert.ok(worst < 40, `steepest 50 m step ${String(worst)} m`);
+  assert.ok(deepest > 300, `deepest ${String(deepest)} m`);
 }, 60000);

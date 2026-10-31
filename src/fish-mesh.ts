@@ -14,7 +14,8 @@ import { absorb } from './underwater-life.js';
 export type FishLevel = 0 | 1 | 2;
 
 /** Detail per level: body rings and sides (fish), grid cells (ray), bell rows and segments (jelly). */
-const LEVELS: Record<FishShape, ReadonlyArray<readonly [number, number]>> = {
+type Detail = readonly [number, number];
+const LEVELS: Record<FishShape, readonly [Detail, Detail, Detail]> = {
   fish: [[7, 6], [4, 4], [2, 3]],
   ray: [[5, 6], [3, 4], [2, 2]],
   jelly: [[4, 8], [3, 6], [2, 4]],
@@ -146,10 +147,10 @@ export function createFishMesh(species: FishSpecies, level: FishLevel, capacity:
   }
   geometry.setAttribute('aSwim', new THREE.InstancedBufferAttribute(swim, 2));
   const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
-  material.onBeforeCompile = (shader) => patchFishShader(shader, species, time);
+  material.onBeforeCompile = (shader) => { patchFishShader(shader, species, time); };
   material.customProgramCacheKey = () => `fish-${species.shape}`;
   const mesh = new THREE.InstancedMesh(geometry, material, capacity);
-  mesh.name = `fish-${species.name}-${level}`;
+  mesh.name = `fish-${species.name}-${String(level)}`;
   return mesh;
 }
 

@@ -9,7 +9,7 @@ const floor = createSeafloor(42, land);
 const habitat = createHabitat(42);
 
 /** A spread of cells around the start bay, near and away from the coast. */
-const cells: Array<[number, number]> = [];
+const cells: [number, number][] = [];
 for (let cz = -6; cz <= 6; cz += 2) for (let cx = -6; cx <= 6; cx += 2) cells.push([cx, cz]);
 
 test('life per cell is deterministic and independent of visit order', () => {
@@ -18,7 +18,7 @@ test('life per cell is deterministic and independent of visit order', () => {
   assert.deepEqual(forward, backward);
   const all = forward.flat();
   const kinds = new Set(all.map((i) => i.kind));
-  assert.ok(all.length > 50 && kinds.size === 3, `${all.length} ${[...kinds]}`);
+  assert.ok(all.length > 50 && kinds.size === 3, `${String(all.length)} ${String([...kinds])}`);
   // Lower tiers try fewer candidates: a subset of the same instances.
   const low = lifeInCell(42, 2, 2, floor.heightAt, habitat, 14);
   const high = lifeInCell(42, 2, 2, floor.heightAt, habitat, 30);
@@ -30,7 +30,7 @@ test('life stays under the surface, on the floor, inside its cell', () => {
     for (const inst of lifeInCell(42, cx, cz, floor.heightAt, habitat, 30)) {
       const ground = floor.heightAt(inst.x, inst.z);
       assert.ok(inst.y <= ground && inst.y > ground - 0.5, 'foot on the floor');
-      assert.ok(inst.y + inst.height < -1, `${inst.kind} top ${inst.y + inst.height}`);
+      assert.ok(inst.y + inst.height < -1, `${inst.kind} top ${String(inst.y + inst.height)}`);
       assert.ok(Math.floor(inst.x / LIFE_CELL) === cx && Math.floor(inst.z / LIFE_CELL) === cz);
       assert.ok(inst.height > 0 && inst.width > 0);
     }

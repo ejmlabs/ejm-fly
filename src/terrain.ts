@@ -2,8 +2,9 @@ import { fork, hash } from './rng.js';
 import { clamp, distance2 } from './math.js';
 import { createLand, type Land } from './land.js';
 import { clampClearOfLand } from './shore.js';
+import { item } from './item.js';
 
-export type ShipSpec = {
+export interface ShipSpec {
   id: number;
   x: number;
   z: number;
@@ -11,9 +12,9 @@ export type ShipSpec = {
   scale: number;
   kind: 'sloop' | 'tall';
   seed: number;
-};
+}
 
-export type WorldLayout = {
+export interface WorldLayout {
   land: Land;
   ships: ShipSpec[];
   whaleHome: { x: number; z: number };
@@ -21,7 +22,7 @@ export type WorldLayout = {
   viewYaw: number;
   /** Whale heading the journey keeps: the planet's migration heading, out of the opening by its exit. */
   journey: number;
-};
+}
 
 /** Camera look direction on XZ for a yaw (matches CalmCamera). */
 export function lookDirXZ(yaw: number): { x: number; z: number } {
@@ -60,7 +61,7 @@ export function inPortraitViewCone(
 
 function placeAway(
   rng: () => number,
-  existing: Array<{ x: number; z: number; radius: number }>,
+  existing: { x: number; z: number; radius: number }[],
   minR: number,
   maxR: number,
   clearance: number,
@@ -100,7 +101,7 @@ function shortestAngle(a: number, b: number): number {
 export function computeViewYaw(
   whale: { x: number; z: number },
   hero: { x: number; z: number },
-  landmarks: ReadonlyArray<{ x: number; z: number }>,
+  landmarks: readonly { x: number; z: number }[],
   sunAzimuthDeg: number,
 ): number {
   const sunYaw = (sunAzimuthDeg * Math.PI) / 180;
@@ -185,7 +186,7 @@ export const SHIP_LAND_MARGIN = 40;
 export function layoutWorld(seed: number, sunAzimuthDeg = 185, options: { gridSize?: number } = {}): WorldLayout {
   const rng = fork(seed, 'layout');
   const sunYaw = (sunAzimuthDeg * Math.PI) / 180;
-  const occupied: Array<{ x: number; z: number; radius: number }> = [];
+  const occupied: { x: number; z: number; radius: number }[] = [];
 
   // Whale first (near origin), then hero along sun; land is then anchored in that view.
   const whalePos = placeAway(rng, occupied, 8, 36, 22) ?? { x: 10, z: -16 };
@@ -215,13 +216,13 @@ export function layoutWorld(seed: number, sunAzimuthDeg = 185, options: { gridSi
   });
 
   // Provisional subject yaw (hero-primary) anchors the land ahead of the camera.
-  let viewYaw = computeViewYaw(whalePos, ships[0]!, [], sunAzimuthDeg);
+  let viewYaw = computeViewYaw(whalePos, item(ships, 0), [], sunAzimuthDeg);
   const land = createLand(seed, { viewYaw, gridSize: options.gridSize });
 
   // The harbour is open water, but make sure of it.
   const whaleHome = clampClearOfLand(whalePos.x, whalePos.z, land, SHIP_LAND_MARGIN + 60);
   {
-    const hero = ships[0]!;
+    const hero = item(ships, 0);
     const clear = clampClearOfLand(hero.x, hero.z, land, SHIP_LAND_MARGIN);
     hero.x = clear.x;
     hero.z = clear.z;
@@ -248,10 +249,10 @@ export function layoutWorld(seed: number, sunAzimuthDeg = 185, options: { gridSi
 
   // Keep the yaw the land was composed for; pulling toward a coast afterwards
   // would drift the frame off the scored composition.
-  viewYaw = computeViewYaw(whaleHome, ships[0]!, [], sunAzimuthDeg);
+  viewYaw = computeViewYaw(whaleHome, item(ships, 0), [], sunAzimuthDeg);
 
   // Re-aim hero heading so sails read sideways to the camera.
-  ships[0]!.heading = viewYaw + Math.PI * 0.5 + (rng() - 0.5) * 0.25;
+  item(ships, 0).heading = viewYaw + Math.PI * 0.5 + (rng() - 0.5) * 0.25;
 
   return {
     land,

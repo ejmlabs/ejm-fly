@@ -1,8 +1,9 @@
+import { item } from './item.js';
 /**
  * The swell shared by everything that floats: the water surface, ships, the whale and the wakes all ride it, so they
  * agree on where the sea is. Its waves are fixed; only their heights follow the sea level, from glassy to rough.
  */
-export type SwellWave = { wavelength: number; amplitude: number; heading: number; speed: number };
+export interface SwellWave { wavelength: number; amplitude: number; heading: number; speed: number }
 
 /** Wavelengths 40, 17 and 9 m, amplitudes 0.18, 0.07 and 0.03 m: the calm sea, matching the mirror-like water. */
 export const SWELL_WAVES: readonly SwellWave[] = [
@@ -43,7 +44,7 @@ const sea = {
 };
 
 function waveOf(i: number): SwellWave {
-  return i < SWELL_WAVES.length ? SWELL_WAVES[i]! : WIND_WAVES[i - SWELL_WAVES.length]!;
+  return i < SWELL_WAVES.length ? item(SWELL_WAVES, i) : item(WIND_WAVES, i - SWELL_WAVES.length);
 }
 
 /** Sets the sea level and the wind's direction for every rider and for the water. */
@@ -67,7 +68,7 @@ export function seaLevel(): number {
   return sea.level;
 }
 
-export type SwellSample = { height: number; slopeX: number; slopeZ: number };
+export interface SwellSample { height: number; slopeX: number; slopeZ: number }
 
 /** Surface height (m) and slope (dh/dx, dh/dz) at world (x, z) and time `t` seconds. Writes into `out` when given. */
 export function swellAt(x: number, z: number, t: number, out: SwellSample = { height: 0, slopeX: 0, slopeZ: 0 }): SwellSample {
@@ -75,12 +76,12 @@ export function swellAt(x: number, z: number, t: number, out: SwellSample = { he
   let slopeX = 0;
   let slopeZ = 0;
   for (let i = 0; i < SEA_WAVES; i++) {
-    const a = sea.amplitude[i]!;
+    const a = sea.amplitude[i] ?? 0;
     if (a === 0) continue;
-    const k = sea.k[i]!;
-    const dx = sea.dirX[i]!;
-    const dz = sea.dirZ[i]!;
-    const phase = k * (x * dx + z * dz) - k * sea.speed[i]! * t;
+    const k = sea.k[i] ?? 0;
+    const dx = sea.dirX[i] ?? 0;
+    const dz = sea.dirZ[i] ?? 0;
+    const phase = k * (x * dx + z * dz) - k * (sea.speed[i] ?? 0) * t;
     height += a * Math.sin(phase);
     const slope = a * k * Math.cos(phase);
     slopeX += slope * dx;
@@ -99,11 +100,11 @@ export function swellAt(x: number, z: number, t: number, out: SwellSample = { he
 export function packWaves(originX: number, originZ: number, t: number, out: Float32Array): Float32Array {
   const turn = Math.PI * 2;
   for (let i = 0; i < SEA_WAVES; i++) {
-    const k = sea.k[i]!;
-    const phase = k * (originX * sea.dirX[i]! + originZ * sea.dirZ[i]!) - k * sea.speed[i]! * t;
-    out[i * 4] = sea.dirX[i]! * k;
-    out[i * 4 + 1] = sea.dirZ[i]! * k;
-    out[i * 4 + 2] = sea.amplitude[i]!;
+    const k = sea.k[i] ?? 0;
+    const phase = k * (originX * (sea.dirX[i] ?? 0) + originZ * (sea.dirZ[i] ?? 0)) - k * (sea.speed[i] ?? 0) * t;
+    out[i * 4] = (sea.dirX[i] ?? 0) * k;
+    out[i * 4 + 1] = (sea.dirZ[i] ?? 0) * k;
+    out[i * 4 + 2] = sea.amplitude[i] ?? 0;
     out[i * 4 + 3] = phase - Math.floor(phase / turn) * turn;
   }
   return out;

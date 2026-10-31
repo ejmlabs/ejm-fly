@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { smoothstep } from './math.js';
+import { item } from './item.js';
+import { drawAsAuthored } from './tone.js';
 
 /** Where a wake is made: world metres, heading as the whale's (forward = (−cos h, sin h)), height of the body and speed in m/s. */
-export type WakeSource = { x: number; y: number; z: number; heading: number; speed: number };
+export interface WakeSource { x: number; y: number; z: number; heading: number; speed: number }
 
-export type WakeOptions = {
+export interface WakeOptions {
   /** Points of the trail, one per `interval` seconds. */
   points?: number;
   interval?: number;
@@ -21,9 +23,9 @@ export type WakeOptions = {
   depths?: readonly [number, number];
   /** Height of the sea at world (x, z); the foam lies on it. Flat water when not given. */
   surface?: (x: number, z: number) => number;
-};
+}
 
-export type Wake = {
+export interface Wake {
   /** A trail ribbon and a bow wave: one draw, added to the world group (world coordinates, floating origin applied by the parent). */
   group: THREE.Group;
   update: (source: WakeSource, dt: number) => void;
@@ -34,7 +36,7 @@ export type Wake = {
   /** Draws made last frame. */
   draws: () => number;
   dispose: () => void;
-};
+}
 
 const COLOR = new THREE.Color(0xeaf3f6);
 /** Foam rides just above the water. */
@@ -112,16 +114,15 @@ export function createWake(options: WakeOptions = {}): Wake {
   }
   geometry.setIndex(trailIndex);
 
-  const material = new THREE.MeshBasicMaterial({
+  const material = drawAsAuthored(new THREE.MeshBasicMaterial({
     color: COLOR,
     vertexColors: true,
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    // White water should stay white, as the whale's own spray does.
-    toneMapped: false,
+    // White water stays white, as the whale's own spray does: authored as it should look on screen.
     fog: false,
-  });
+  }));
   const mesh = new THREE.Mesh(geometry, material);
   mesh.frustumCulled = false;
   mesh.renderOrder = 2;
@@ -139,27 +140,27 @@ export function createWake(options: WakeOptions = {}): Wake {
     let written = 0;
     for (let k = 0; k < filled; k++) {
       const i = (head - 1 - k + count * 2) % count;
-      const age = pa[i]!;
+      const age = pa[i] ?? 0;
       // Churned water is patchy: each point is a little stronger or weaker than its neighbours.
       // Broken foam: patches along the trail, and ragged across it.
-      const a = fade(age, ps[i]!) * (0.3 + 0.7 * Math.abs(Math.sin(pn[i]! * 0.8) * Math.cos(pn[i]! * 0.31 + 1)));
+      const a = fade(age, ps[i] ?? 0) * (0.3 + 0.7 * Math.abs(Math.sin((pn[i] ?? 0) * 0.8) * Math.cos((pn[i] ?? 0) * 0.31 + 1)));
       const half = width + spread * age;
       // Across the heading: the whale's right is (−fz, fx) with forward (−cos h, sin h).
-      const fx = -Math.cos(ph[i]!);
-      const fz = Math.sin(ph[i]!);
-      const cx = px[i]! - source.x;
-      const cz = pz[i]! - source.z;
+      const fx = -Math.cos(ph[i] ?? 0);
+      const fz = Math.sin(ph[i] ?? 0);
+      const cx = (px[i] ?? 0) - source.x;
+      const cz = (pz[i] ?? 0) - source.z;
       for (let c = 0; c < COLUMNS; c++) {
         const o = (written * COLUMNS + c) * 3;
-        const side = ACROSS[c]! * half;
+        const side = item(ACROSS, c) * half;
         trailPositions[o] = cx - fz * side;
-        trailPositions[o + 1] = surface(source.x + trailPositions[o]!, source.z + cz + fx * side);
+        trailPositions[o + 1] = surface(source.x + trailPositions[o], source.z + cz + fx * side);
         trailPositions[o + 2] = cz + fx * side;
         const q = (written * COLUMNS + c) * 4;
         trailColors[q] = 1;
         trailColors[q + 1] = 1;
         trailColors[q + 2] = 1;
-        trailColors[q + 3] = a * ACROSS_ALPHA[c]! * (0.55 + 0.45 * Math.sin(pn[i]! * 2.3 + c * 1.7));
+        trailColors[q + 3] = a * item(ACROSS_ALPHA, c) * (0.55 + 0.45 * Math.sin((pn[i] ?? 0) * 2.3 + c * 1.7));
       }
       written++;
     }
@@ -188,7 +189,7 @@ export function createWake(options: WakeOptions = {}): Wake {
           // Right of the heading is (−fz, fx).
           bowBase[o + edge * 3] = fx * bow - fx * back + -fz * w;
           bowBase[o + edge * 3 + 2] = fz * bow - fz * back + fx * w;
-          bowBase[o + edge * 3 + 1] = surface(source.x + bowBase[o + edge * 3]!, source.z + bowBase[o + edge * 3 + 2]!);
+          bowBase[o + edge * 3 + 1] = surface(source.x + (bowBase[o + edge * 3] ?? 0), source.z + (bowBase[o + edge * 3 + 2] ?? 0));
         }
         const a = PEAK * 1.3 * s * (1 - u) ** 1.2;
         const c = (arm * ARM + i) * 8;
@@ -211,12 +212,15 @@ export function createWake(options: WakeOptions = {}): Wake {
       mesh.position.set(source.x, LIFT, source.z);
       const fx = -Math.cos(source.heading);
       const fz = Math.sin(source.heading);
-      for (let k = 0; k < filled; k++) pa[(head - 1 - k + count * 2) % count]! += dt;
+      for (let k = 0; k < filled; k++) {
+        const at = (head - 1 - k + count * 2) % count;
+        pa[at] = (pa[at] ?? 0) + dt;
+      }
       since += dt;
       // A jump (a recentre of the debug travel) leaves the old trail behind: start again.
       if (filled > 0) {
         const last = (head - 1 + count) % count;
-        if (Math.hypot(source.x - px[last]!, source.z - pz[last]!) > 120) filled = 0;
+        if (Math.hypot(source.x - (px[last] ?? 0), source.z - (pz[last] ?? 0)) > 120) filled = 0;
       }
       if (since >= interval && strength > 0.02) {
         since = 0;
@@ -232,7 +236,7 @@ export function createWake(options: WakeOptions = {}): Wake {
       // Anything that has faded out is no longer drawn.
       let live = 0;
       for (let k = 0; k < filled; k++) {
-        if (pa[(head - 1 - k + count * 2) % count]! < LIFE) live++;
+        if ((pa[(head - 1 - k + count * 2) % count] ?? 0) < LIFE) live++;
         else break;
       }
       filled = live;
@@ -246,8 +250,8 @@ export function createWake(options: WakeOptions = {}): Wake {
       }
       if (showBow) writeBow(source, strength);
       else bowColors.fill(0);
-      geometry.attributes['position']!.needsUpdate = true;
-      geometry.attributes['color']!.needsUpdate = true;
+      item(geometry.attributes, 'position').needsUpdate = true;
+      item(geometry.attributes, 'color').needsUpdate = true;
       drawn = mesh.visible ? 1 : 0;
     },
     length(alpha = 0.1) {
@@ -256,8 +260,8 @@ export function createWake(options: WakeOptions = {}): Wake {
         const i = (head - 1 - k + count * 2) % count;
         const j = (head - k + count * 2) % count;
         // The newest points are still fading in; only the fade-out ends the count.
-        if (pa[i]! > 0.4 && fade(pa[i]!, ps[i]!) < alpha) break;
-        metres += Math.hypot(px[i]! - px[j]!, pz[i]! - pz[j]!);
+        if ((pa[i] ?? 0) > 0.4 && fade(pa[i] ?? 0, ps[i] ?? 0) < alpha) break;
+        metres += Math.hypot((px[i] ?? 0) - (px[j] ?? 0), (pz[i] ?? 0) - (pz[j] ?? 0));
       }
       return metres;
     },

@@ -3,6 +3,8 @@ import { box, shape } from './land-objects.js';
 import { WALKER } from './land-life.js';
 import { landShadingGLSL, type LandStream } from './landmesh.js';
 import { WALKER_STRIDE } from './world-tiles.js';
+import { item } from './item.js';
+import { DRAW_AS_AUTHORED_GLSL } from './tone.js';
 
 /**
  * People and animals on the land: one instanced draw for people and one for
@@ -12,7 +14,7 @@ import { WALKER_STRIDE } from './world-tiles.js';
  * the land, and kept out of the water's mirror (layer 1): they are too small
  * to reflect.
  */
-export type Walkers = {
+export interface Walkers {
   group: THREE.Group;
   /** Refills the instances when the drawn tiles change; `clock` drives the animation. */
   update: (cameraX: number, cameraZ: number, clock: number) => void;
@@ -21,7 +23,7 @@ export type Walkers = {
   materials: readonly THREE.Material[];
   stats: () => { walkers: number; draws: number; triangles: number };
   dispose: () => void;
-};
+}
 
 /** Vertex tags: 1 and 2 are the two legs (or leg pairs), 3 the head; +10 takes the instance's tint. */
 const TINTED = 10;
@@ -109,7 +111,7 @@ varying vec3 vNormal;
 varying vec3 vWorld;
 void main() {
   gl_FragColor = vec4( landShade( vColor, normalize( vNormal ), vWorld ), 1.0 );
-  #include <colorspace_fragment>
+  ${DRAW_AS_AUTHORED_GLSL}
 }`;
 
 /** Instances are re-sorted by distance once the camera has moved this far. */
@@ -130,7 +132,6 @@ export function createWalkers(stream: LandStream, initialCap: number): Walkers {
       uniforms: { ...stream.uniforms, clock },
       vertexColors: true,
       fog: false,
-      toneMapped: false,
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.frustumCulled = false;
@@ -166,14 +167,14 @@ export function createWalkers(stream: LandStream, initialCap: number): Walkers {
     for (const { tile } of order) {
       const data = tile.data;
       for (let r = 0; r + WALKER_STRIDE <= data.length && total < cap; r += WALKER_STRIDE) {
-        const look = LOOKS[data[r]!]!;
-        const kind = kinds[data[r]! === WALKER.person ? 0 : 1]!;
+        const look = item(LOOKS, data[r] ?? 0);
+        const kind = item(kinds, (data[r] ?? 0) === WALKER.person ? 0 : 1);
         const n = kind.count++;
         total++;
         const g = kind.geometry;
-        (g.getAttribute('spot') as THREE.InstancedBufferAttribute).setXYZW(n, tile.x0 + data[r + 1]! - ax, data[r + 2]!, tile.z0 + data[r + 3]! - az, data[r + 4]!);
-        (g.getAttribute('motion') as THREE.InstancedBufferAttribute).setXYZW(n, data[r + 6]!, data[r + 5]!, look.speed, look.scale);
-        const [cr, cg, cb] = linear(look.tints[data[r + 7]! % look.tints.length]!);
+        (g.getAttribute('spot') as THREE.InstancedBufferAttribute).setXYZW(n, tile.x0 + (data[r + 1] ?? 0) - ax, data[r + 2] ?? 0, tile.z0 + (data[r + 3] ?? 0) - az, data[r + 4] ?? 0);
+        (g.getAttribute('motion') as THREE.InstancedBufferAttribute).setXYZW(n, data[r + 6] ?? 0, data[r + 5] ?? 0, look.speed, look.scale);
+        const [cr, cg, cb] = linear(look.tints[(data[r + 7] ?? 0) % look.tints.length] ?? 0);
         (g.getAttribute('tint') as THREE.InstancedBufferAttribute).setXYZ(n, cr, cg, cb);
       }
     }

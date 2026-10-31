@@ -1,4 +1,6 @@
 import type { Shore } from './shore.js';
+import { trimOldest } from './bounded.js';
+import { createSliceCost } from './slice-cost.js';
 
 /**
  * Navigation field valid anywhere: the signed coast distance on a fixed world
@@ -13,7 +15,10 @@ export type NavField = Shore & {
   distanceAt: (x: number, z: number) => number;
   /** Whether the tile holding (x, z) is built (reading it would not stall). */
   ready: (x: number, z: number) => boolean;
-  /** Builds missing tiles within `radius` of (x, z), nearest first, for at most `budgetMs`; true once all are built. */
+  /**
+   * Builds missing tiles within `radius` of (x, z), nearest first, in slices, and stops once the time left in `budgetMs`
+   * would not hold another; a call builds at least one slice. True once all are built.
+   */
   prefetch: (x: number, z: number, radius: number, budgetMs: number) => boolean;
   readonly min: number;
   readonly cell: number;
@@ -21,7 +26,7 @@ export type NavField = Shore & {
   stats: () => { tiles: number; blocks: number };
 };
 
-export type NavOptions = {
+export interface NavOptions {
   /** World X/Z of lattice index 0. */
   min: number;
   cell: number;
@@ -33,7 +38,7 @@ export type NavOptions = {
   now?: () => number;
   /** Mask samples already computed elsewhere on the same lattice (must equal fround(maskAt)). */
   known?: (i: number, j: number) => number | undefined;
-};
+}
 
 export function createNavField(maskAt: (x: number, z: number) => number, options: NavOptions): NavField {
   const { min, cell } = options;
@@ -44,6 +49,7 @@ export function createNavField(maskAt: (x: number, z: number) => number, options
   /** Lines of the distance transform per slice of a tile build (about a fifth of a millisecond). */
   const TILE_LINES = 32;
   const now = options.now ?? (() => performance.now());
+  const cost = createSliceCost();
   const saturation = P * cell;
   const span = T + 1;
   const W = T + 2 * P + 1;
@@ -56,7 +62,7 @@ export function createNavField(maskAt: (x: number, z: number) => number, options
   function touch<V>(map: Map<string, V>, key: string, value: V, cap: number): void {
     map.delete(key);
     map.set(key, value);
-    while (map.size > cap) map.delete(map.keys().next().value!);
+    trimOldest(map, cap);
   }
 
   function blockRows(job: NonNullable<typeof pending>, until: () => boolean): boolean {
@@ -75,13 +81,13 @@ export function createNavField(maskAt: (x: number, z: number) => number, options
   }
 
   function block(bx: number, bz: number): Float32Array {
-    const key = `${bx}:${bz}`;
+    const key = `${String(bx)}:${String(bz)}`;
     const hit = blocks.get(key);
     if (hit) {
       touch(blocks, key, hit, maxBlocks);
       return hit;
     }
-    const job = pending && pending.key === key ? pending : { key, bx, bz, data: new Float32Array(T * T), row: 0 };
+    const job = pending?.key === key ? pending : { key, bx, bz, data: new Float32Array(T * T), row: 0 };
     blockRows(job, () => false);
     if (pending === job) pending = null;
     touch(blocks, key, job.data, maxBlocks);
@@ -109,7 +115,7 @@ export function createNavField(maskAt: (x: number, z: number) => number, options
         const jb = Math.min(j0 + W - 1, bz * T + T - 1);
         for (let j = ja; j <= jb; j++) {
           for (let i = ia; i <= ib; i++) {
-            const land = data[(j - bz * T) * T + (i - bx * T)]! > 0;
+            const land = (data[(j - bz * T) * T + (i - bx * T)] ?? 0) > 0;
             const k = (j - j0) * W + (i - i0);
             toLand[k] = land ? 0 : inf;
             toSea[k] = land ? inf : 0;
@@ -123,7 +129,7 @@ export function createNavField(maskAt: (x: number, z: number) => number, options
     for (let j = 0; j < span; j++) {
       for (let i = 0; i < span; i++) {
         const k = (j + P) * W + (i + P);
-        const value = toLand[k]! > 0 ? Math.sqrt(toLand[k]!) * cell : -Math.sqrt(toSea[k]!) * cell;
+        const value = (toLand[k] ?? 0) > 0 ? Math.sqrt(toLand[k] ?? 0) * cell : -Math.sqrt(toSea[k] ?? 0) * cell;
         out[j * span + i] = Math.max(-saturation, Math.min(saturation, value));
       }
     }
@@ -131,10 +137,10 @@ export function createNavField(maskAt: (x: number, z: number) => number, options
   }
 
   /** The tile being built a slice at a time by `prefetch`. */
-  let building: { key: string; steps: Generator<void, Float32Array> } | null = null;
+  let building: { key: string; tx: number; tz: number; steps: Generator<void, Float32Array> } | null = null;
 
   function tile(tx: number, tz: number): Float32Array {
-    const key = `${tx}:${tz}`;
+    const key = `${String(tx)}:${String(tz)}`;
     let t = tiles.get(key);
     if (!t) {
       // Reading a missing tile builds it now, over the scratch grids a half-built tile was using.
@@ -154,8 +160,8 @@ export function createNavField(maskAt: (x: number, z: number) => number, options
 
   /** Builds the tile a slice at a time until `over`; true once it is built. */
   function stepTile(tx: number, tz: number, over: () => boolean): boolean {
-    const key = `${tx}:${tz}`;
-    if (!building || building.key !== key) building = { key, steps: buildTileSteps(tx, tz) };
+    const key = `${String(tx)}:${String(tz)}`;
+    if (building?.key !== key) building = { key, tx, tz, steps: buildTileSteps(tx, tz) };
     for (;;) {
       const next = building.steps.next();
       if (next.done) {
@@ -181,8 +187,8 @@ export function createNavField(maskAt: (x: number, z: number) => number, options
     const ax = lx - x0;
     const az = lz - z0;
     const k = z0 * span + x0;
-    const a = t[k]! + (t[k + 1]! - t[k]!) * ax;
-    const b = t[k + span]! + (t[k + span + 1]! - t[k + span]!) * ax;
+    const a = (t[k] ?? 0) + ((t[k + 1] ?? 0) - (t[k] ?? 0)) * ax;
+    const b = (t[k + span] ?? 0) + ((t[k + span + 1] ?? 0) - (t[k + span] ?? 0)) * ax;
     return a + (b - a) * az;
   }
 
@@ -215,42 +221,48 @@ export function createNavField(maskAt: (x: number, z: number) => number, options
     ready(x, z) {
       const tx = Math.floor((x - min) / cell / T);
       const tz = Math.floor((z - min) / cell / T);
-      return tiles.has(`${tx}:${tz}`);
+      return tiles.has(`${String(tx)}:${String(tz)}`);
     },
     prefetch(x, z, radius, budgetMs) {
       const start = now();
-      const over = () => now() - start > budgetMs;
+      let last = start;
+      // Asked after every slice: notes what it took, and says whether the time left would not hold another.
+      const over = () => {
+        const t = now();
+        cost.note(t - last);
+        last = t;
+        return !cost.fits(budgetMs - (t - start));
+      };
       const size = T * cell;
       const fx = (x - min) / size;
       const fz = (z - min) / size;
       const reach = Math.ceil(radius / size);
-      const wanted: Array<{ tx: number; tz: number; d: number }> = [];
+      const wanted: { tx: number; tz: number; d: number }[] = [];
       for (let tz = Math.floor(fz) - reach; tz <= Math.floor(fz) + reach; tz++) {
         for (let tx = Math.floor(fx) - reach; tx <= Math.floor(fx) + reach; tx++) {
           const d = Math.hypot(tx + 0.5 - fx, tz + 0.5 - fz) * size;
-          if (d <= radius + size * 0.71 && !tiles.has(`${tx}:${tz}`)) wanted.push({ tx, tz, d });
+          if (d <= radius + size * 0.71 && !tiles.has(`${String(tx)}:${String(tz)}`)) wanted.push({ tx, tz, d });
         }
       }
       wanted.sort((a, b) => a.d - b.d || a.tz - b.tz || a.tx - b.tx);
       // A tile half built goes first, however the whale has moved since.
       if (building && !tiles.has(building.key)) {
-        const [bx, bz] = building.key.split(':').map(Number);
-        if (!stepTile(bx!, bz!, over)) return false;
+        if (!stepTile(building.tx, building.tz, over)) return false;
       }
       for (const { tx, tz } of wanted) {
         // Fill this tile's blocks a row at a time; the distance transform itself is cheap.
         for (let bz = tz - 1; bz <= tz + 1; bz++) {
           for (let bx = tx - 1; bx <= tx + 1; bx++) {
-            const key = `${bx}:${bz}`;
+            const key = `${String(bx)}:${String(bz)}`;
             if (blocks.has(key)) continue;
-            if (!pending || pending.key !== key) pending = { key, bx, bz, data: new Float32Array(T * T), row: 0 };
+            if (pending?.key !== key) pending = { key, bx, bz, data: new Float32Array(T * T), row: 0 };
             if (!blockRows(pending, over)) return false;
             touch(blocks, key, pending.data, maxBlocks);
             pending = null;
             if (over()) return false;
           }
         }
-        if (!tiles.has(`${tx}:${tz}`) && !stepTile(tx, tz, over)) return false;
+        if (!tiles.has(`${String(tx)}:${String(tz)}`) && !stepTile(tx, tz, over)) return false;
         if (over()) return false;
       }
       return true;
@@ -270,7 +282,10 @@ export function squaredDistance(
   v = new Int32Array(size),
   z = new Float64Array(size + 1),
 ): void {
-  for (const _ of squaredDistanceSteps(grid, size, Infinity, f, d, v, z));
+  const steps = squaredDistanceSteps(grid, size, Infinity, f, d, v, z);
+  while (!steps.next().done) {
+    // Every slice runs now; the stepped form exists for the streaming budget.
+  }
 }
 
 /** squaredDistance in slices: yields after every `lines` lines of the row and column passes. */
@@ -284,16 +299,16 @@ export function* squaredDistanceSteps(
   z = new Float64Array(size + 1),
 ): Generator<void> {
   const pass = (offset: number, stride: number) => {
-    for (let i = 0; i < size; i++) f[i] = grid[offset + i * stride]!;
+    for (let i = 0; i < size; i++) f[i] = grid[offset + i * stride] ?? 0;
     let k = 0;
     v[0] = 0;
     z[0] = -Infinity;
     z[1] = Infinity;
     for (let q = 1; q < size; q++) {
-      let s = ((f[q]! + q * q) - (f[v[k]!]! + v[k]! * v[k]!)) / (2 * q - 2 * v[k]!);
-      while (s <= z[k]!) {
+      let s = (((f[q] ?? 0) + q * q) - ((f[v[k] ?? 0] ?? 0) + (v[k] ?? 0) * (v[k] ?? 0))) / (2 * q - 2 * (v[k] ?? 0));
+      while (s <= (z[k] ?? 0)) {
         k--;
-        s = ((f[q]! + q * q) - (f[v[k]!]! + v[k]! * v[k]!)) / (2 * q - 2 * v[k]!);
+        s = (((f[q] ?? 0) + q * q) - ((f[v[k] ?? 0] ?? 0) + (v[k] ?? 0) * (v[k] ?? 0))) / (2 * q - 2 * (v[k] ?? 0));
       }
       k++;
       v[k] = q;
@@ -302,11 +317,11 @@ export function* squaredDistanceSteps(
     }
     k = 0;
     for (let q = 0; q < size; q++) {
-      while (z[k + 1]! < q) k++;
-      const dq = q - v[k]!;
-      d[q] = dq * dq + f[v[k]!]!;
+      while ((z[k + 1] ?? 0) < q) k++;
+      const dq = q - (v[k] ?? 0);
+      d[q] = dq * dq + (f[v[k] ?? 0] ?? 0);
     }
-    for (let i = 0; i < size; i++) grid[offset + i * stride] = d[i]!;
+    for (let i = 0; i < size; i++) grid[offset + i * stride] = d[i] ?? 0;
   };
   for (let row = 0; row < size; row++) {
     pass(row * size, 1);

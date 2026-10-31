@@ -13,11 +13,11 @@ import type { ShipHandle } from './ships.js';
 
 export type ObstacleKind = 'whale' | 'ship' | 'rock' | 'prop';
 
-export type Obstacle = { kind: ObstacleKind; capsule: Capsule };
+export interface Obstacle { kind: ObstacleKind; capsule: Capsule }
 
-export type FeelerHit = { obstacle: Obstacle; distance: number };
+export interface FeelerHit { obstacle: Obstacle; distance: number }
 
-export type Obstacles = {
+export interface Obstacles {
   /** Forgets every obstacle; movers are added again each frame, after they move. Allocates nothing once warm. */
   clear: () => void;
   add: (obstacle: Obstacle) => void;
@@ -30,7 +30,7 @@ export type Obstacles = {
    */
   feeler: (origin: THREE.Vector3, direction: THREE.Vector3, length: number, radius?: number, ignore?: Obstacle) => FeelerHit | null;
   readonly size: number;
-};
+}
 
 /** Hash cell edge, metres: a few whale lengths, about one tall ship with room to spare. */
 export const OBSTACLE_CELL = 64;
@@ -214,12 +214,12 @@ export function shipCapsule(ship: Pick<ShipHandle, 'group' | 'size'>, out = new 
 }
 
 /** The analytic surfaces movers collide with. Both are exact height fields, so sampling them is exact collision. */
-export type Surfaces = {
+export interface Surfaces {
   /** Ground height in metres: land above the sea, the seafloor (negative) below it. */
   groundAt: (x: number, z: number) => number;
   /** Sea surface height at time `t` seconds of the swell's clock. */
   seaAt: (x: number, z: number, t: number) => number;
-};
+}
 
 export function createSurfaces(seafloor: { heightAt: (x: number, z: number) => number }): Surfaces {
   const sample: SwellSample = { height: 0, slopeX: 0, slopeZ: 0 };

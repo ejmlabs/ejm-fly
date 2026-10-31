@@ -7,7 +7,7 @@ import { createBirds } from '../src/birds.js';
 import { FOV, FOV_LIFT, FollowCamera, LEAN_MAX, PULL_BACK, pullBackAt } from '../src/camera.js';
 import { swellAt, swellRate, SWELL_SPEED_GAIN } from '../src/swell.js';
 import { cloudPatches } from '../src/sky.js';
-import { patchShader } from '../src/ocean.js';
+import { patchShader } from '../src/shader-patch.js';
 import { layoutWorld } from '../src/terrain.js';
 import { createShip } from '../src/ships.js';
 import { createShipFx } from '../src/ship-fx.js';
@@ -15,6 +15,7 @@ import { createWhalePilot, type WhaleCourse } from '../src/whale-course.js';
 import { LANDMARK_CELL } from '../src/landmarks.js';
 import { createWeather } from '../src/weather.js';
 import { REGION_FROM, createLand } from '../src/land.js';
+import { item } from '../src/item.js';
 
 const forward = (heading: number) => ({ x: -Math.cos(heading), z: Math.sin(heading) });
 
@@ -30,11 +31,11 @@ test('a cruising whale leaves a wake at least 40 m long in one draw, and a slow 
     wake.update({ x, y: 0, z, heading, speed: 16 }, 1 / 30);
   }
   assert.ok(wake.length(0.05) >= 40, `trail ${wake.length(0.05).toFixed(0)} m at 16 m/s`);
-  assert.equal(wake.draws(), 1, `${wake.draws()} draws`);
+  assert.equal(wake.draws(), 1, `${String(wake.draws())} draws`);
   assert.equal(wake.group.children.length, 1, 'trail and bow wave are one mesh');
   // Vertices stay close to the source: far coordinates stay exact.
   for (const mesh of wake.group.children as THREE.Mesh[]) {
-    const position = mesh.geometry.attributes['position']!;
+    const position = item(mesh.geometry.attributes, 'position');
     for (let i = 0; i < position.count; i++) assert.ok(Math.abs(position.getX(i)) < 400 && Math.abs(position.getZ(i)) < 400, 'vertex offsets are local');
   }
   // It fades with age: after the whale stops, the trail is gone within seconds.
@@ -77,7 +78,7 @@ test('birds are passing flocks: they come in ahead, pass the whale at cruise and
   let x = 0;
   let z = 0;
   const dt = 1 / 30;
-  let nearest = Infinity;
+  let nearest: number;
   const nearSamples: number[] = [];
   let farthest = 0;
   const passes: number[] = [];
@@ -104,7 +105,7 @@ test('birds are passing flocks: they come in ahead, pass the whale at cruise and
     if (wasAhead && !ahead) passes.push(step / 30);
     wasAhead = ahead;
   }
-  assert.ok(passes.length >= 4, `${passes.length} flocks passed in 400 s`);
+  assert.ok(passes.length >= 4, `${String(passes.length)} flocks passed in 400 s`);
   assert.ok(farthest < 1800, `a bird ${farthest.toFixed(0)} m from the whale`);
   // Never a flock that keeps pace: birds near the whale only for part of the time, and some of the time none are in the sky.
   const close = nearSamples.filter((d) => d < 200).length / nearSamples.length;
@@ -117,7 +118,7 @@ test('birds start near the whale, so the opening has a flock to see', () => {
   const dt = 1 / 30;
   for (let i = 0; i < 90; i++) birds.update(i * dt, 0, 0, dt, { x: 0, y: 5, z: 18 }, false);
   const flock = birdPositions(birds.group);
-  assert.ok(flock.length >= 3, `${flock.length} birds in the opening`);
+  assert.ok(flock.length >= 3, `${String(flock.length)} birds in the opening`);
   assert.ok(flock.some((p) => Math.hypot(p.x, p.z) < 400));
   birds.dispose();
 });
@@ -133,10 +134,11 @@ test('the swell runs faster the faster the whale swims', () => {
   assert.notEqual(a.height, b.height);
 });
 
-test('the sky patches onto three.js: its clouds take a wind vector', () => {
+test('the sky patches onto three.js: its clouds take a wind vector and a low sun warms its horizon', () => {
   const patched = patchShader(new Sky().material.fragmentShader, cloudPatches);
   assert.ok(patched, 'the clouds patch found its place in the sky shader');
   assert.ok(patched.includes('cloudUV += time * cloudSpeed * cloudWind;'));
+  assert.ok(patched.includes('texColor *= 1.0 + skyGlow * exp( -abs( direction.y )'), 'the horizon belt is in the sky shader, thinning both ways from the horizon');
 });
 
 function chase(options: { portrait?: boolean } = {}) {
@@ -171,7 +173,7 @@ function swim(rig: FollowCamera, camera: THREE.PerspectiveCamera, from: number, 
 
 test('the camera at speed pulls back at most a quarter, lifts the view at most 6 degrees and keeps the whale in the middle 80 percent', () => {
   assert.equal(pullBackAt(0), 0);
-  assert.ok(pullBackAt(28) <= PULL_BACK + 1e-9 && pullBackAt(28) > 0.2, `pull-back ${pullBackAt(28)}`);
+  assert.ok(pullBackAt(28) <= PULL_BACK + 1e-9 && pullBackAt(28) > 0.2, `pull-back ${String(pullBackAt(28))}`);
   assert.equal(pullBackAt(60), pullBackAt(28));
   assert.ok(pullBackAt(10) < pullBackAt(20));
   for (const portrait of [false, true]) {
@@ -180,8 +182,8 @@ test('the camera at speed pulls back at most a quarter, lifts the view at most 6
     const fast = chase({ portrait });
     const { worst } = swim(fast.rig, fast.camera, 16, 28, 40);
     const lift = fast.camera.fov - FOV[portrait ? 1 : 0];
-    assert.ok(lift > 4.5 && lift <= FOV_LIFT + 1e-6, `field of view lifted ${lift.toFixed(2)} degrees (portrait ${portrait})`);
-    assert.ok(worst <= 0.8, `the whale reached ${worst.toFixed(2)} of the half frame (portrait ${portrait})`);
+    assert.ok(lift > 4.5 && lift <= FOV_LIFT + 1e-6, `field of view lifted ${lift.toFixed(2)} degrees (portrait ${String(portrait)})`);
+    assert.ok(worst <= 0.8, `the whale reached ${worst.toFixed(2)} of the half frame (portrait ${String(portrait)})`);
     assert.equal(slow.camera.fov, FOV[portrait ? 1 : 0], 'no lift at rest');
   }
 });
@@ -229,11 +231,11 @@ test('landmarks pass the route: at least four within 1.5 km in ten minutes of op
       for (let a = ci - 1; a <= ci + 1; a++) {
         for (let b = cj - 1; b <= cj + 1; b++) {
           const mark = land.landmarks.cell(a, b);
-          if (Math.hypot(mark.x, mark.z) > 5000 && Math.hypot(mark.x - course.x, mark.z - course.z) < 1500) seen.add(`${a}:${b}`);
+          if (Math.hypot(mark.x, mark.z) > 5000 && Math.hypot(mark.x - course.x, mark.z - course.z) < 1500) seen.add(`${String(a)}:${String(b)}`);
         }
       }
     }
-    assert.ok(seen.size >= 4, `seed ${seed}: ${seen.size} landmarks within 1.5 km in 600 s`);
+    assert.ok(seen.size >= 4, `seed ${String(seed)}: ${String(seen.size)} landmarks within 1.5 km in 600 s`);
   }
 }, 120000);
 
@@ -254,10 +256,10 @@ test('landmarks that stand alone in the sea break the surface, small and low', (
         if (!sea) continue;
         alone++;
         const high = land.heightAt(mark.x, mark.z);
-        assert.ok(high > 0 && high < 60, `landmark ${i}:${j} of seed ${seed} is ${high.toFixed(0)} m high`);
+        assert.ok(high > 0 && high < 60, `landmark ${String(i)}:${String(j)} of seed ${String(seed)} is ${high.toFixed(0)} m high`);
       }
     }
-    assert.ok(alone > 60, `${alone} lone landmarks`);
+    assert.ok(alone > 60, `${String(alone)} lone landmarks`);
   }
 });
 
@@ -296,12 +298,12 @@ test('a landmark stands only in open water: sea all round it out to a kilometre'
           for (let k = 0; k < 16; k++) {
             const x = mark.x + Math.cos((k / 16) * Math.PI * 2) * ring;
             const z = mark.z + Math.sin((k / 16) * Math.PI * 2) * ring;
-            assert.ok(bare.maskAt(x, z) < 0, `landmark ${i}:${j} of seed ${seed} stands by a natural coast at ${ring} m`);
+            assert.ok(bare.maskAt(x, z) < 0, `landmark ${String(i)}:${String(j)} of seed ${String(seed)} stands by a natural coast at ${String(ring)} m`);
           }
         }
       }
     }
-    assert.ok(stood > 100, `${stood} landmarks stand on seed ${seed}`);
+    assert.ok(stood > 100, `${String(stood)} landmarks stand on seed ${String(seed)}`);
   }
 });
 
@@ -320,26 +322,41 @@ test('ships are two meshes each (hull and rig, and the sails), shaped, and sway 
     for (const spec of specs) {
       const ship = createShip(spec);
       assert.equal(ship.group.children.length, 2, 'a ship is two draws');
-      const hull = (ship.group.children[0] as THREE.Mesh).geometry.attributes['position']!;
+      const hull = item((ship.group.children[0] as THREE.Mesh).geometry.attributes, 'position');
       assert.ok(hull.count > 300, 'a hull and its rig');
       assert.equal(ship.lanterns.length, 2);
       assert.ok(ship.size.length > 3 && ship.size.beam > 1);
       const stub = { clearance: () => 1000, away: () => ({ x: 1, z: 0 }) };
       for (let i = 0; i < 120; i++) ship.update(1 / 30, i / 30, stub);
-      const sails = (ship.group.children[1] as THREE.Mesh).geometry.attributes['position']!;
+      const sails = item((ship.group.children[1] as THREE.Mesh).geometry.attributes, 'position');
       for (let i = 0; i < sails.count; i++) assert.ok(Number.isFinite(sails.getX(i) + sails.getY(i) + sails.getZ(i)));
       // The sails hang inside the hull's reach: a ship is a ship, not a smear.
       const box = new THREE.Box3().setFromBufferAttribute(sails as THREE.BufferAttribute);
-      assert.ok(box.max.y > 2 && box.max.y < 9 && box.max.x - box.min.x < 6, `sail box ${box.min.toArray()} ${box.max.toArray()}`);
+      assert.ok(box.max.y > 2 && box.max.y < 9 && box.max.x - box.min.x < 6, `sail box ${String(box.min.toArray())} ${String(box.max.toArray())}`);
       ship.dispose();
     }
   }
 });
 
+test('a ship told not to billow still moves but leaves its sails as they were', () => {
+  const stub = { clearance: () => 1000, away: () => ({ x: 1, z: 0 }) };
+  const ship = createShip(item(layoutWorld(42).ships, 0));
+  const sails = () => (item(ship.group.children, 1) as THREE.Mesh).geometry.getAttribute('position').array.slice();
+  ship.update(1 / 30, 0, stub);
+  const before = sails();
+  const at = ship.group.position.clone();
+  ship.update(1 / 30, 1.3, stub, false);
+  assert.deepEqual(sails(), before);
+  assert.ok(!ship.group.position.equals(at), 'the hull still rides the swell');
+  ship.update(1 / 30, 1.3, stub);
+  assert.notDeepEqual(sails(), before, 'the sails sway when asked to');
+  ship.dispose();
+});
+
 test('ships have foam always and lanterns only in the dark, in two draws for all of them', () => {
   const stub = { clearance: () => 1000, away: () => ({ x: 1, z: 0 }) };
   const ships = layoutWorld(42).ships.map((spec) => createShip(spec));
-  ships.forEach((ship) => ship.update(1 / 30, 0, stub));
+  ships.forEach((ship) => { ship.update(1 / 30, 0, stub); });
   const fx = createShipFx();
   fx.update(ships, 1);
   assert.equal(fx.draws(), 1, 'by day only foam');
@@ -347,7 +364,7 @@ test('ships have foam always and lanterns only in the dark, in two draws for all
   assert.equal(fx.draws(), 2, 'at night foam and lanterns');
   fx.update([], 0.05);
   assert.equal(fx.draws(), 0);
-  ships.forEach((ship) => ship.dispose());
+  ships.forEach((ship) => { ship.dispose(); });
   fx.dispose();
 });
 
@@ -361,7 +378,7 @@ test('the page\'s land and the worker\'s agree about every landmark near the sta
     for (let i = -3; i <= 2; i++) {
       for (let j = -3; j <= 2; j++) {
         const mark = main.landmarks.cell(i, j);
-        assert.equal(main.maskAt(mark.x, mark.z), worker.maskAt(mark.x, mark.z), `seed ${seed}: landmark ${i}:${j} differs between the page's land and the worker's`);
+        assert.equal(main.maskAt(mark.x, mark.z), worker.maskAt(mark.x, mark.z), `seed ${String(seed)}: landmark ${String(i)}:${String(j)} differs between the page's land and the worker's`);
         checked++;
       }
     }

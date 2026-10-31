@@ -1,16 +1,16 @@
 import { clamp } from './math.js';
 
 /** Answers "how far is land, and which way is open water" for anything afloat. */
-export type Shore = {
+export interface Shore {
   /** Distance in metres from (x, z) to the nearest land. Negative means on land. */
   clearance: (x: number, z: number) => number;
   /** Unit XZ direction pointing away from the nearest land. */
   away: (x: number, z: number) => { x: number; z: number };
   /** A cheap, rough `clearance` that works kilometres out (no navigation tile needed); `clearance` when absent. */
   reach?: (x: number, z: number) => number;
-};
+}
 
-export type Circle = { x: number; z: number; radius: number };
+export interface Circle { x: number; z: number; radius: number }
 
 /** Shore made of round islands. Used by tests and as a simple stand-in. */
 export function circleShore(circles: readonly Circle[]): Shore {

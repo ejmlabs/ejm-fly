@@ -1,3 +1,25 @@
+/** Value noise that tiles: `tiledNoise` in [0, 1], repeating every `period` cells, which may differ per axis. */
+export const GLSL_TILED_NOISE = /* glsl */ `
+float hash12( vec2 p ) {
+  return fract( sin( dot( p, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 );
+}
+
+float tiledNoise( vec2 p, vec2 period ) {
+  vec2 i = floor( p );
+  vec2 f = fract( p );
+  vec2 u = f * f * ( 3.0 - 2.0 * f );
+  float a = hash12( mod( i, period ) );
+  float b = hash12( mod( i + vec2( 1.0, 0.0 ), period ) );
+  float c = hash12( mod( i + vec2( 0.0, 1.0 ), period ) );
+  float d = hash12( mod( i + vec2( 1.0, 1.0 ), period ) );
+  return mix( mix( a, b, u.x ), mix( c, d, u.x ), u.y );
+}
+
+float tiledNoise( vec2 p, float period ) {
+  return tiledNoise( p, vec2( period ) );
+}
+`;
+
 /**
  * GLSL shared by the underwater materials. Every pattern is periodic over
  * 256 m of render-space position plus `uPattern` (the origin modulo 256), so
@@ -38,22 +60,7 @@ vec2 hash22( vec2 p ) {
   return fract( sin( vec2( dot( p, vec2( 127.1, 311.7 ) ), dot( p, vec2( 269.5, 183.3 ) ) ) ) * 43758.5453 );
 }
 
-float hash12( vec2 p ) {
-  return fract( sin( dot( p, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 );
-}
-
-/** Value noise in [0, 1] that tiles every \`period\` cells. */
-float tiledNoise( vec2 p, float period ) {
-  vec2 i = floor( p );
-  vec2 f = fract( p );
-  vec2 u = f * f * ( 3.0 - 2.0 * f );
-  float a = hash12( mod( i, period ) );
-  float b = hash12( mod( i + vec2( 1.0, 0.0 ), period ) );
-  float c = hash12( mod( i + vec2( 0.0, 1.0 ), period ) );
-  float d = hash12( mod( i + vec2( 1.0, 1.0 ), period ) );
-  return mix( mix( a, b, u.x ), mix( c, d, u.x ), u.y );
-}
-
+${GLSL_TILED_NOISE}
 /** Bright network where moving cells meet: light focused by the swell above. */
 float causticLayer( vec2 p, float period, float t ) {
   p += 0.3 * sin( p.yx * ( TAU / 16.0 ) + t * 0.7 );

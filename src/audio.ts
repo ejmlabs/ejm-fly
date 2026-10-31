@@ -4,6 +4,7 @@ import type { Shore } from './shore.js';
 import type { FloatingOrigin, ShipEmitter, WaterSignal } from './seams.js';
 import { damp, lerp } from './math.js';
 import { hash, random, type Rng } from './rng.js';
+import { item } from './item.js';
 import {
   GULL_CALLS,
   SPLASH_HITS,
@@ -37,9 +38,9 @@ import {
  * nothing runs while it is off or the page is hidden.
  */
 
-export type AudioSettings = { enabled: boolean; volume: number };
+export interface AudioSettings { enabled: boolean; volume: number }
 
-export type AudioInput = {
+export interface AudioInput {
   /** The listener rides on this camera (render coordinates). */
   camera: THREE.Camera;
   signal: WaterSignal;
@@ -51,7 +52,7 @@ export type AudioInput = {
   origin: FloatingOrigin;
   /** The weather now: rain, wind and sea, each 0 to 1. */
   weather: { rain: number; wind: number; sea: number };
-};
+}
 
 const SOUNDS = {
   ocean: [new URL('../assets/audio/ocean.ogg', import.meta.url).href, new URL('../assets/audio/ocean.m4a', import.meta.url).href],
@@ -86,7 +87,7 @@ function preferOpus(): boolean {
 
 async function decode(context: AudioContext, url: string): Promise<AudioBuffer> {
   const response = await fetch(url, { credentials: 'same-origin' });
-  if (!response.ok) throw new Error(`audio ${response.status}`);
+  if (!response.ok) throw new Error(`audio ${String(response.status)}`);
   return context.decodeAudioData(await response.arrayBuffer());
 }
 
@@ -101,7 +102,7 @@ async function loadAll(context: AudioContext): Promise<Buffers> {
       return decode(context, ogg).catch(() => decode(context, m4a));
     }),
   );
-  return Object.fromEntries(names.map((name, i) => [name, buffers[i]!])) as Buffers;
+  return Object.fromEntries(names.map((name, i) => [name, item(buffers, i)])) as Buffers;
 }
 
 function setLevel(param: AudioParam, value: number, now: number, timeConstant = SMOOTH): void {
@@ -110,13 +111,13 @@ function setLevel(param: AudioParam, value: number, now: number, timeConstant = 
 
 type Voice = THREE.Audio | THREE.PositionalAudio;
 
-type ShipSlot = {
+interface ShipSlot {
   engine: THREE.PositionalAudio;
   wash: THREE.PositionalAudio;
   /** Ship id this slot follows, or -1 while fading out / idle. */
   id: number;
   level: number;
-};
+}
 
 /** Everything that exists only once sound has been turned on. */
 class SoundEngine {
@@ -318,13 +319,17 @@ class SoundEngine {
     if (this.sleepTimer !== null) return;
     this.sleepTimer = setTimeout(() => {
       this.sleepTimer = null;
-      if (this.context.state === 'running') this.context.suspend().catch(() => {});
+      if (this.context.state === 'running') {
+        this.context.suspend().catch(() => {
+          // A context that will not suspend stays awake and silent.
+        });
+      }
     }, 600);
   }
 
   playing(): number {
     let count = 0;
-    for (let i = 0; i < this.voices.length; i++) if (this.voices[i]!.isPlaying) count++;
+    for (let i = 0; i < this.voices.length; i++) if (item(this.voices, i).isPlaying) count++;
     return count;
   }
 
@@ -388,8 +393,8 @@ class SoundEngine {
   }
 
   private splash(x: number, z: number, hit: number, gain: number, rate: number, now: number): void {
-    const voice = this.splashes[0]!.isPlaying && !this.splashes[1]!.isPlaying ? this.splashes[1]! : this.splashes[0]!;
-    const [offset, duration] = SPLASH_HITS[hit]!;
+    const voice = item(this.splashes, 0).isPlaying && !item(this.splashes, 1).isPlaying ? item(this.splashes, 1) : item(this.splashes, 0);
+    const [offset, duration] = item(SPLASH_HITS, hit);
     this.shot(voice, x, 0.3, z, offset, duration, gain, rate, now);
   }
 
@@ -478,8 +483,8 @@ class SoundEngine {
       return;
     }
     this.gullTimer = lerp(10, 2.5, g) * lerp(0.6, 1.4, r());
-    const voice = this.gulls[0]!.isPlaying ? this.gulls[1]! : this.gulls[0]!;
-    const [offset, duration] = GULL_CALLS[Math.floor(r() * GULL_CALLS.length) % GULL_CALLS.length]!;
+    const voice = item(this.gulls, 0).isPlaying ? item(this.gulls, 1) : item(this.gulls, 0);
+    const [offset, duration] = item(GULL_CALLS, Math.floor(r() * GULL_CALLS.length) % GULL_CALLS.length);
     const along = (r() - 0.5) * 120;
     this.shot(
       voice,
@@ -502,10 +507,10 @@ class SoundEngine {
     while (this.points.length < ships.length) this.points.push({ id: 0, x: 0, z: 0 });
     this.points.length = ships.length;
     for (let i = 0; i < ships.length; i++) {
-      const ship = ships[i]!;
+      const ship = item(ships, i);
       ship.group.updateWorldMatrix(true, false);
       this.tmp.setFromMatrixPosition(ship.group.matrixWorld);
-      const p = this.points[i]!;
+      const p = item(this.points, i);
       p.id = ship.spec.id;
       p.x = this.tmp.x;
       p.z = this.tmp.z;
@@ -514,19 +519,19 @@ class SoundEngine {
 
     // Release slots whose ship left the selection; they fade out where they are.
     for (let s = 0; s < this.slots.length; s++) {
-      const slot = this.slots[s]!;
+      const slot = item(this.slots, s);
       if (slot.id < 0) continue;
       let kept = false;
-      for (let k = 0; k < count; k++) if (this.points[this.nearest[k]!]!.id === slot.id) kept = true;
+      for (let k = 0; k < count; k++) if (item(this.points, this.nearest[k] ?? 0).id === slot.id) kept = true;
       if (!kept) slot.id = -1;
     }
     // Give newly selected ships a silent slot.
     for (let k = 0; k < count; k++) {
-      const id = this.points[this.nearest[k]!]!.id;
+      const id = item(this.points, this.nearest[k] ?? 0).id;
       let free: ShipSlot | null = null;
       let taken = false;
       for (let s = 0; s < this.slots.length; s++) {
-        const slot = this.slots[s]!;
+        const slot = item(this.slots, s);
         if (slot.id === id) taken = true;
         else if (!free && slot.id < 0 && slot.level < 0.01) free = slot;
       }
@@ -544,13 +549,13 @@ class SoundEngine {
     }
 
     for (let s = 0; s < this.slots.length; s++) {
-      const slot = this.slots[s]!;
+      const slot = item(this.slots, s);
       let distance = Infinity;
       if (slot.id >= 0) {
         for (let k = 0; k < count; k++) {
-          const p = this.points[this.nearest[k]!]!;
+          const p = item(this.points, this.nearest[k] ?? 0);
           if (p.id !== slot.id) continue;
-          distance = this.nearestDist[k]!;
+          distance = this.nearestDist[k] ?? 0;
           slot.engine.position.set(p.x, 1.5, p.z);
           slot.wash.position.set(p.x, 0, p.z);
         }
@@ -576,8 +581,8 @@ class SoundEngine {
       return;
     }
     this.hornTimer = 90 + this.rng() * 110;
-    const p = this.points[this.nearest[0]!]!;
-    const d = this.nearestDist[0]!;
+    const p = item(this.points, this.nearest[0] ?? 0);
+    const d = this.nearestDist[0] ?? 0;
     this.shot(this.horn, p.x, 6, p.z, 0, 0, hornGain(d) * lerp(0.6, 0.85, this.rng()), lerp(0.94, 1.04, this.rng()), now);
   }
 
@@ -586,7 +591,9 @@ class SoundEngine {
     this.unsubscribe?.();
     for (const voice of this.voices) if (voice.isPlaying) voice.stop();
     this.listener.removeFromParent();
-    this.context.close().catch(() => {});
+    this.context.close().catch(() => {
+      // The page is going away; a context that will not close goes with it.
+    });
   }
 }
 
@@ -614,13 +621,12 @@ export class OceanAudio {
     }
     if (!this.engine) {
       // Remembered "on" from an earlier visit still waits for this visit's first tap or key.
-      const activation = (navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation;
-      if (activation && !activation.hasBeenActive) {
+      // Older browsers have no record of activation; they play on the enabling tap.
+      if ('userActivation' in navigator && !navigator.userActivation.hasBeenActive) {
         this.waitForGesture();
         return;
       }
-      const Context = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!Context) return;
+      if (typeof AudioContext === 'undefined' && !('webkitAudioContext' in window)) return;
       this.engine = new SoundEngine(this.seed);
     }
     await this.engine.wake(this.volume);
@@ -633,7 +639,9 @@ export class OceanAudio {
       window.removeEventListener('pointerdown', start, true);
       window.removeEventListener('keydown', start, true);
       this.awaitingGesture = false;
-      this.sync(!document.hidden).catch(() => {});
+      this.sync(!document.hidden).catch(() => {
+        // Sound stays off when the context cannot start; the button still reflects the choice.
+      });
     };
     window.addEventListener('pointerdown', start, true);
     window.addEventListener('keydown', start, true);

@@ -1,17 +1,18 @@
+import { item } from './item.js';
 export type QualityTier = 'low' | 'medium' | 'high';
 
-export type QualityOptions = {
+export interface QualityOptions {
   mobile?: boolean;
   software?: boolean;
-  cores?: number;
-  memory?: number;
+  cores?: number | undefined;
+  memory?: number | undefined;
   dpr?: number;
   maxDpr?: number;
   minDpr?: number;
   targetFPS?: number;
-};
+}
 
-export type QualityState = {
+export interface QualityState {
   mobile: boolean;
   maximum: number;
   minimum: number;
@@ -27,7 +28,7 @@ export type QualityState = {
   waterSize: number;
   landSegments: number;
   changed: string | null;
-};
+}
 
 export function selectQualityTier({ mobile = false, software = false, cores = 8, memory = 8 }: QualityOptions = {}): QualityTier {
   if (mobile || software) return 'low';
@@ -38,7 +39,7 @@ export function selectQualityTier({ mobile = false, software = false, cores = 8,
  * What the added world detail may spend per tier: birds updated, ships at full detail, trees, rocks and houses per
  * land tile, people and animals drawn, and the land's bump detail.
  */
-export type DetailBudget = { birds: number; ships: number; objects: number; walkers: number; microNormal: 'off' | 'near' | 'full' };
+export interface DetailBudget { birds: number; ships: number; objects: number; walkers: number; microNormal: 'off' | 'near' | 'full' }
 
 const detailTable: Record<QualityTier, DetailBudget> = {
   low: { birds: 10, ships: 4, objects: 36, walkers: 64, microNormal: 'off' },
@@ -100,7 +101,7 @@ export function updateQuality(state: QualityState, milliseconds: number): boolea
   state.changed = null;
   if (state.average > state.target * 1.3) {
     if (state.tier !== 'low') {
-      state.tier = names[names.indexOf(state.tier) - 1]!;
+      state.tier = item(names, names.indexOf(state.tier) - 1);
       state.maximum = Math.min(state.dpr, caps[state.tier]);
       state.ratio = Math.min(state.ratio, state.maximum);
       state.waterSize = waterSizes[state.tier];
@@ -112,7 +113,7 @@ export function updateQuality(state: QualityState, milliseconds: number): boolea
   } else if (state.average < state.target * 1.08) {
     state.ratio = Math.min(state.maximum, state.ratio + 0.05);
     if (state.ratio === previous && state.tier !== state.initialTier) {
-      state.tier = names[names.indexOf(state.tier) + 1]!;
+      state.tier = item(names, names.indexOf(state.tier) + 1);
       state.maximum = Math.min(state.dpr, caps[state.tier]);
       state.waterSize = waterSizes[state.tier];
       state.landSegments = landSegs[state.tier];

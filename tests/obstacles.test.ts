@@ -22,6 +22,7 @@ import { swellAt } from '../src/swell.js';
 import { createShip, SHIP_SIZE } from '../src/ships.js';
 import { WHALE_LENGTH } from '../src/whale-model.js';
 import { whaleForward } from '../src/whale-course.js';
+import { item } from '../src/item.js';
 
 const land = layoutWorld(42, 140).land;
 const v = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, y, z);
@@ -86,7 +87,7 @@ function rayCapsuleReference(ro: THREE.Vector3, rd: THREE.Vector3, a: THREE.Vect
 test('ray meets a capsule on its body, its caps, as a sphere, from inside, or not at all', () => {
   const a = v(0, 0, -5);
   const b = v(0, 0, 5);
-  const close = (got: number, want: number) => assert.ok(Math.abs(got - want) < 1e-9, `${got} vs ${want}`);
+  const close = (got: number, want: number) => { assert.ok(Math.abs(got - want) < 1e-9, `${String(got)} vs ${String(want)}`); };
   close(rayCapsule(v(-10, 0, 0), v(1, 0, 0), a, b, 1), 9);
   close(rayCapsule(v(0, 0, -20), v(0, 0, 1), a, b, 1), 14);
   close(rayCapsule(v(0, 0, 20), v(0, 0, -1), a, b, 1), 14);
@@ -127,14 +128,14 @@ test('the ray–capsule closed form agrees with an independent search, including
     const gotHit = got >= 0 && got <= length;
     if (want < 0) {
       // A graze within the reference's tolerance may go either way.
-      if (gotHit) assert.ok(Math.abs(pointSegment(along.copy(rd).multiplyScalar(got).add(ro), a, b) - r) < 1e-6, `${q}: false hit`);
+      if (gotHit) assert.ok(Math.abs(pointSegment(along.copy(rd).multiplyScalar(got).add(ro), a, b) - r) < 1e-6, `${String(q)}: false hit`);
       continue;
     }
-    assert.ok(gotHit, `${q}: missed at ${want}`);
-    assert.ok(Math.abs(got - want) < 1e-5, `${q}: ${got} vs ${want}`);
+    assert.ok(gotHit, `${String(q)}: missed at ${String(want)}`);
+    assert.ok(Math.abs(got - want) < 1e-5, `${String(q)}: ${String(got)} vs ${String(want)}`);
     hits++;
   }
-  assert.ok(hits > 1000, `${hits} hits`);
+  assert.ok(hits > 1000, `${String(hits)} hits`);
 });
 
 test('the registry answers overlap and feeler queries exactly as a brute-force check does, frame after frame', () => {
@@ -171,7 +172,7 @@ test('the registry answers overlap and feeler queries exactly as a brute-force c
       for (let q = 0; q < 200; q++) {
         const probe = capsule(v(pick(), 0, pick()), v((rng() - 0.5) * 60, (rng() - 0.5) * 20, (rng() - 0.5) * 60), 2 + rng() * 6);
         probe.end.add(probe.start);
-        const ignore = live[q % live.length]!;
+        const ignore = item(live, q % live.length);
         const got = obstacles.overlaps(probe, ignore, found);
         assert.equal(got, found);
         const want = live.filter((o) => o !== ignore && capsulesOverlap(probe, o.capsule));
@@ -198,7 +199,7 @@ test('the registry answers overlap and feeler queries exactly as a brute-force c
       }
     }
   }
-  assert.ok(overlapping > 200 && hits > 200, `queries exercised: ${overlapping} overlaps, ${hits} hits`);
+  assert.ok(overlapping > 200 && hits > 200, `queries exercised: ${String(overlapping)} overlaps, ${String(hits)} hits`);
 
   obstacles.clear();
   assert.equal(obstacles.size, 0);
@@ -236,7 +237,7 @@ test('a ship capsule lies along its hull at the waterline and blocks a feeler', 
   assert.deepEqual(obstacles.overlaps(whale, obstacle), []);
   const from = middle.clone().add(v(0, 0, -200));
   const hit = obstacles.feeler(from, v(0, 0, 1), 300, WHALE_RADIUS);
-  assert.ok(hit && hit.obstacle === obstacle && hit.distance > 150 && hit.distance < 200);
+  assert.ok(hit?.obstacle === obstacle && hit.distance > 150 && hit.distance < 200);
   ship.dispose();
 });
 
@@ -259,7 +260,7 @@ test('the surfaces are the seafloor and the swell, and clearance goes negative i
       assert.ok(Math.abs(groundClearance(surfaces, capsule(v(x, -2, z), v(x, -2, z), 1)) - (-3 - ground)) < 1e-9);
     }
   }
-  assert.ok(onLand > 10 && atSea > 10, `${onLand} on land, ${atSea} at sea`);
+  assert.ok(onLand > 10 && atSea > 10, `${String(onLand)} on land, ${String(atSea)} at sea`);
 });
 
 test('the mover sync registers the whale and the ships afloat afresh each frame', () => {

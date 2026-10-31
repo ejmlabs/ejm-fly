@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { resolveSeed, seedURL, nextSeed } from './seed.js';
 import { createQuality, detailFor, updateQuality } from './quality.js';
 import { layoutWorld } from './terrain.js';
-import { createSky, HAZE_ANGLES } from './sky.js';
+import { createSky, HAZE_ANGLES, SUN_INTENSITY } from './sky.js';
 import { createWhale, skinMs, type WhalePhase } from './whale.js';
 import { PHASE_LEN } from './whale-motion.js';
 import { createWorld } from './world.js';
@@ -30,8 +30,11 @@ import { createWeatherFx } from './weather-fx.js';
 import { createLandLife, HERD_CELL, TOWN_CELL } from './land-life.js';
 import { PACES, type Pace } from './pace.js';
 import { createViewControls } from './view-controls.js';
+import { createFinish, frameMode, isFrameMode } from './finish.js';
+import { displayExposure } from './tone.js';
+import { item } from './item.js';
 
-type CalmReview = {
+interface CalmReview {
   time: number;
   advance: (seconds: number) => void;
   /** Swims the whale on for this many seconds of simulation (30 Hz steps), streaming the world as it goes. */
@@ -66,13 +69,13 @@ type CalmReview = {
    * Towns and herds within `radius` of the whale, nearest first: where, ground height, how many, and a vantage on
    * open water with a clear sightline to them (null when there is none within 400 m).
    */
-  life: (radius: number) => Array<{ kind: 'town' | 'herd'; x: number; y: number; z: number; count: number; vantage: [number, number, number] | null }>;
+  life: (radius: number) => { kind: 'town' | 'herd'; x: number; y: number; z: number; count: number; vantage: [number, number, number] | null }[];
   /** The highest land between `near` and `far` metres from the whale (world coordinates). */
   peak: (near: number, far: number) => { x: number; y: number; z: number };
   /** Review camera at world `from` looking at `to`, the whale and the land streamed around it; null returns to the chase. */
   view: (from: [number, number, number] | null, to?: [number, number, number]) => void;
   stats: () => Record<string, number | string | boolean | number[]>;
-};
+}
 
 const params = new URLSearchParams(location.search);
 const debug = params.get('debug') === '1';
@@ -92,7 +95,7 @@ function markJourney(): void {
   journey.fixAt = time;
   const fixes = journey.fixes;
   for (let i = 0; i + 2 * REVISIT_AFTER < fixes.length; i += 2) {
-    if (Math.hypot(x - fixes[i]!, z - fixes[i + 1]!) < REVISIT_RADIUS) {
+    if (Math.hypot(x - (fixes[i] ?? 0), z - (fixes[i + 1] ?? 0)) < REVISIT_RADIUS) {
       journey.back++;
       break;
     }
@@ -126,9 +129,9 @@ const indicator = createRoute(REGION_LOOKS.map((look) => look.name));
 const resolved = resolveSeed(location.search, memory?.seed, () => {
   const word = new Uint32Array(1);
   crypto.getRandomValues(word);
-  return word[0]! / 0x100000000;
+  return (word[0] ?? 0) / 0x100000000;
 });
-let seed = resolved.seed;
+const seed = resolved.seed;
 history.replaceState(null, '', seedURL(location.href, seed));
 
 const mobile = matchMedia('(pointer: coarse)').matches || window.innerWidth < 700;
@@ -137,12 +140,12 @@ const quality = createQuality({
   dpr: window.devicePixelRatio || 1,
   maxDpr: mobile ? 2 : 2,
   cores: navigator.hardwareConcurrency || 8,
-  memory: (navigator as Navigator & { deviceMemory?: number }).deviceMemory || 8,
+  memory: (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8,
 });
 
 const audio = new OceanAudio(memory?.sound ?? { enabled: false, volume: 0.35 }, seed);
 const ui = createUI({
-  share: () => `${location.origin}${location.pathname}?seed=${seed >>> 0}`,
+  share: () => `${location.origin}${location.pathname}?seed=${String(seed >>> 0)}`,
   newSeed() {
     const next = nextSeed(seed);
     location.href = seedURL(location.href, next).href;
@@ -182,13 +185,20 @@ if (!canvasEl) {
 }
 const canvas = canvasEl;
 
+// The finish (src/finish.ts) on a GPU with multisampled half floats, a multisampled canvas on other GPUs, a plain
+// canvas on CPU renderers. Review can ask for a mode (`?debug=1&frame=finish`).
+const askedFrame = debug ? params.get('frame') : null;
+const drawMode = frameMode(isFrameMode(askedFrame) ? askedFrame : null);
 const renderer = new THREE.WebGLRenderer({
   canvas,
-  antialias: false,
+  antialias: drawMode !== 'plain',
   alpha: false,
   powerPreference: 'low-power',
+  outputBufferType: drawMode === 'finish' ? THREE.HalfFloatType : THREE.UnsignedByteType,
 });
 renderer.setClearColor(0x7a9bb0, 1);
+// Counted per frame (`stats()`): the water's mirror and the finish render inside the frame and would reset them.
+renderer.info.autoReset = false;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.setPixelRatio(quality.ratio);
 renderer.autoClear = true;
@@ -224,10 +234,11 @@ const swellSample = { height: 0, slopeX: 0, slopeZ: 0 };
 const surface = (x: number, z: number) => swellAt(x, z, swellClock, swellSample).height;
 const fishTime = { value: 0 };
 let fishShowcase: ReturnType<typeof createFishShowcase> | null = null;
+let finish: ReturnType<typeof createFinish> | null = null;
 
 try {
   const buildStart = performance.now();
-  sky = createSky(seed, renderer, scene);
+  sky = createSky(seed, renderer, scene, environmentFollowsSky());
   layout = layoutWorld(seed, sky.sunAzimuthDeg);
   // yaw 0 marks a follow-camera framing; older orbit framings (yaw = view yaw) are ignored.
   const savedFraming = memory?.framing?.yaw === 0 ? memory.framing : null;
@@ -244,13 +255,12 @@ try {
     hazeGradient: { angles: HAZE_ANGLES, colors: sky.hazeGradient },
     // The sky sets how much light the shallows get as the day goes (a low sun lights them less).
     shallowLight: 1,
-    // Slightly under 1 / exposure: reflections sit a touch darker than the land itself.
-    reflectionGain: 0.8 / renderer.toneMappingExposure,
     waterSize: quality.waterSize,
     landSegments: quality.landSegments,
     detail: detailFor(quality.tier),
     mobile,
     worker: true,
+    dissolve: drawMode === 'plain' ? 'dither' : 'coverage',
   });
   // Real ocean depth: the shelf, slope and abyssal plain by distance from the coast.
   seafloor = createSeafloor(seed, world.land, world.land.depthAt);
@@ -267,7 +277,6 @@ try {
   weather = createWeather(seed, sky.clearCover);
   // A visitor who asked for the indicator sees it on the first change of region, not at once.
   indicator.setEnabled(routeOn, world.land.regions.dominantAt(layout.whaleHome.x, layout.whaleHome.z), 0, false);
-  sky.setEnvironmentRefresh(quality.tier !== 'low');
   // The whale's wake: its stern, bow and width follow the whale's size, and a deeper body still marks the water.
   wake = createWake({ surface, stern: 5 * LENGTH_SCALE, bow: 6 * LENGTH_SCALE, width: 0.8 * DEPTH_SCALE, depths: [-2.6 * DEPTH_SCALE, -0.9 * DEPTH_SCALE] });
   world.root.add(wake.group);
@@ -278,16 +287,22 @@ try {
   birds = createBirds(seed, quality.tier);
   world.root.add(birds.group);
   // The floating origin moved: shift the camera with the world so the chase does not jump.
-  world.origin.onRecenter((dx, dz) => rig.shift(dx, dz));
-  underwater = createUnderwater(scene, renderer, { sky, heightAt: world.land.heightAt, depthAt: world.land.depthAt, origin: world.origin, tier: quality.tier, seed });
+  world.origin.onRecenter((dx, dz) => { rig.shift(dx, dz); });
+  underwater = createUnderwater(scene, renderer, { sky, heightAt: world.land.heightAt, depthAt: world.land.depthAt, origin: world.origin, tier: quality.tier, seed, clearInScene: drawMode === 'finish' });
   // Review only (`?debug=1&fish=1`): every fish species in a small school ahead of the camera.
   if (debug && params.get('fish') === '1') fishShowcase = createFishShowcase(fishTime, UNDERWATER_LAYER);
   if (fishShowcase) scene.add(fishShowcase.group);
+  finish = drawMode === 'finish' ? createFinish(renderer) : null;
   buildMs = performance.now() - buildStart;
 } catch (error) {
   const message = error instanceof Error ? error.message : 'failed to build the scene';
   ui.error(message);
   throw error;
+}
+
+/** The reflection environment follows the sky's light on medium and high; phones keep the opening sky's, dimmed at night. */
+function environmentFollowsSky(): boolean {
+  return quality.tier !== 'low';
 }
 
 function resize(): void {
@@ -306,7 +321,7 @@ function resize(): void {
 resize();
 window.addEventListener('resize', resize);
 
-const view = createViewControls(canvas, rig, (orbiting) => ui.showReset(orbiting));
+const view = createViewControls(canvas, rig, (orbiting) => { ui.showReset(orbiting); });
 
 const motion = matchMedia('(prefers-reduced-motion: reduce)');
 let routeClock = performance.now();
@@ -319,7 +334,9 @@ let lastSave = 0;
 
 function sync(): void {
   ui.sync({ seed, sound: audio.enabled, route: routeOn, dives: followDives, pace });
-  audio.sync(!document.hidden).catch(() => {});
+  audio.sync(!document.hidden).catch(() => {
+    // Sound stays off when the context cannot start; the button still reflects the choice.
+  });
 }
 
 function persist(): void {
@@ -341,7 +358,7 @@ function followWhale(): void {
 }
 
 /** Side-on, close framing so the whale fills ~35–50% of screen width. */
-function frameWhaleEvent(kind: 'breach' | 'spout', view: { yawOffset?: number; pitch?: number; distance?: number } = {}): void {
+function frameWhaleEvent(kind: 'breach' | 'spout', view: { yawOffset?: number | undefined; pitch?: number | undefined; distance?: number | undefined } = {}): void {
   // Review yaw is relative to the heading (0 = behind); −π/2 is a broadside on the whale's
   // left, and the small negative offset swings toward the head for a three-quarter view.
   // Debug overrides are clamped to the ranges the camera rig itself allows.
@@ -391,7 +408,7 @@ function tick(now: number): void {
     birds.setTier(quality.tier);
     weatherFx.setTier(quality.tier);
     world.setWalkerCap(detailFor(quality.tier).walkers);
-    sky.setEnvironmentRefresh(quality.tier !== 'low');
+    sky.setEnvironmentRefresh(environmentFollowsSky());
     renderer.setPixelRatio(quality.ratio);
     resize();
   }
@@ -403,9 +420,12 @@ function tick(now: number): void {
   sky.setWeather(weatherLook);
   sky.setFog(regionLook.fogTint, regionLook.fogMix, regionLook.fogDensity);
   sky.update(dt, motion.matches ? 0.5 : 1);
-  world.ocean.setSky(sky.hazeColor, sky.level, sky.shallowLight);
+  // The sky sets the exposure; display-authored materials and the bloom follow it.
+  displayExposure.value = renderer.toneMappingExposure;
+  finish?.update(renderer.toneMappingExposure);
+  world.ocean.setSky({ haze: sky.hazeColor, exposure: renderer.toneMappingExposure, light: sky.level, shallowLight: sky.shallowLight, sun: sky.sun.intensity / SUN_INTENSITY });
   world.ocean.setWaterColor(regionLook.water);
-  world.landStream.setSky(sky.sunDirection, sky.hazeGradient, sky.hazeDensity, sky.level);
+  world.landStream.setSky(sky.sunDirection, sky.sun.color, sky.hazeGradient, sky.hazeDensity, sky.level);
   world.landStream.setLook(regionLook.hazeDensity * weatherLook.haze, regionLook.land);
   wake.setLight(sky.daylight);
   birds.setMix(regionLook.birds);
@@ -457,6 +477,7 @@ function tick(now: number): void {
   fishTime.value = time;
   fishShowcase?.follow(camera);
   audio.update(dt, { camera, signal, whale: whale.state, ships: world.ships.active(), shore: world.shore, origin: world.origin, weather: weatherLook });
+  renderer.info.reset();
   renderer.render(scene, camera);
   if (!firstFrame) {
     // The first frame of the sea, for load-time checks.
@@ -567,7 +588,10 @@ if (debug) {
       rig.setReview(null);
     },
     setDay(day: number) {
-      if (Number.isFinite(day)) sky.setDay(day);
+      if (!Number.isFinite(day)) return;
+      sky.setDay(day);
+      // A visitor's reflections would have caught up with the sky within ENV_REFRESH; a review jump catches up now.
+      if (environmentFollowsSky()) sky.refreshEnvironment();
     },
     setWeather(state: WeatherState) {
       weather.set(state);
@@ -639,7 +663,7 @@ if (debug) {
       for (let j = Math.floor((z - radius) / HERD_CELL); j <= Math.floor((z + radius) / HERD_CELL); j++) {
         for (let i = Math.floor((x - radius) / HERD_CELL); i <= Math.floor((x + radius) / HERD_CELL); i++) {
           const herd = life.herd(i, j);
-          if (herd.length) add('herd', herd[0]!.x, herd[0]!.z, herd.length);
+          if (herd.length) add('herd', item(herd, 0).x, item(herd, 0).z, herd.length);
         }
       }
       return out.sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z));
@@ -671,7 +695,7 @@ if (debug) {
       markJourney();
     },
     setRoute(on: boolean) {
-      routeOn = Boolean(on);
+      routeOn = on;
       indicator.setEnabled(routeOn, world.land.regions.dominantAt(whale.state.x, whale.state.z), journey.path);
       ui.showRoute(indicator.visible, indicator.text);
       sync();
@@ -705,12 +729,13 @@ if (debug) {
         path: journey.path,
         revisit: journey.fixes.length ? journey.back / (journey.fixes.length / 2) : 0,
         region: world.land.regions.dominantAt(whale.state.x, whale.state.z),
-        regionName: REGION_LOOKS[world.land.regions.dominantAt(whale.state.x, whale.state.z)]!.name,
+        regionName: item(REGION_LOOKS, world.land.regions.dominantAt(whale.state.x, whale.state.z)).name,
         landNear: landWithin(whale.state.x, whale.state.z, 4500),
         net: Math.hypot(journey.x - journey.fromX, journey.z - journey.fromZ) || 0,
         speed: whale.state.speed,
         behavior: whale.state.behavior,
         exposure: renderer.toneMappingExposure,
+        frame: drawMode,
         dayPhase: sky.phase().name,
         stars: sky.stars,
         day: sky.phase().day,
@@ -733,7 +758,7 @@ if (debug) {
         envRefreshes: sky.environment().count,
         route: indicator.visible ? indicator.text : '',
         swellClock,
-        // Last rendered frame (three resets these per render).
+        // The last frame, mirror and finish included.
         draws: renderer.info.render.calls,
         triangles: renderer.info.render.triangles,
         submersion: underwater.signal.submersion,
@@ -780,5 +805,6 @@ window.addEventListener('pagehide', () => {
   birds.dispose();
   underwater.dispose();
   fishShowcase?.dispose();
+  finish?.dispose();
   renderer.dispose();
 });

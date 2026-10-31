@@ -27,11 +27,11 @@ test('drift stays within the eddy bound and bends gently along a straight run', 
     let worst = 0;
     for (let d = 0; d <= 300000; d += 100) {
       const h = current(-Math.cos(base) * d, Math.sin(base) * d);
-      assert.ok(Math.abs(shortestAngle(base, h)) <= bound, `seed ${seed} drift ${shortestAngle(base, h)}`);
+      assert.ok(Math.abs(shortestAngle(base, h)) <= bound, `seed ${String(seed)} drift ${String(shortestAngle(base, h))}`);
       worst = Math.max(worst, Math.abs(shortestAngle(last, h)) / 100);
       last = h;
     }
     // Radians per metre: the spec allows 6 degrees a minute, which at the top cruise speed is 0.0623 rad per km.
-    assert.ok(worst < ((6 * Math.PI) / 180 / (TRAVEL_MAX * 60)), `seed ${seed} curvature ${worst * 1000} rad/km`);
+    assert.ok(worst < ((6 * Math.PI) / 180 / (TRAVEL_MAX * 60)), `seed ${String(seed)} curvature ${String(worst * 1000)} rad/km`);
   }
 });

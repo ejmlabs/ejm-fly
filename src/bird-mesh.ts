@@ -1,6 +1,7 @@
 import * as THREE from 'three';
+import { item } from './item.js';
 
-export type Species = {
+export interface Species {
   name: 'gull' | 'tern' | 'albatross';
   /** Half wingspan (m). */
   span: number;
@@ -21,7 +22,7 @@ export type Species = {
   speed: number;
   rate: number;
   glide: number;
-};
+}
 
 export const SPECIES: readonly Species[] = [
   { name: 'gull', span: 0.95, chord: 0.34, length: 1.0, radius: 0.13, sweep: 0.5, forkedTail: false, body: 0xf4f1ea, back: 0xa7b2bb, tip: 0x2c3541, accent: 0xe8b04a, speed: 9, rate: 7.5, glide: 0.25 },
@@ -37,7 +38,7 @@ const LEVELS = [
 ] as const;
 
 // Body profile along the length (z from -0.5 to 0.5 of the length): [position, radius factor].
-const PROFILE: ReadonlyArray<readonly [number, number]> = [
+const PROFILE: readonly (readonly [number, number])[] = [
   [-0.5, 0.05], [-0.32, 0.5], [-0.1, 1], [0.12, 0.9], [0.27, 0.55], [0.36, 0.55], [0.45, 0.3], [0.52, 0],
 ];
 const BEAK_FROM = 0.42;
@@ -71,21 +72,21 @@ export function buildBird(species: Species, level: 0 | 1 | 2): THREE.BufferGeome
   const { sides, wingSegments, rings } = LEVELS[level];
   const b = new Builder();
   const tri = (pa: readonly number[], pb: readonly number[], pc: readonly number[], hex: [number, number, number], w: [number, number, number] = [0, 0, 0]) => {
-    b.vertex(pa[0]!, pa[1]!, pa[2]!, hex[0], w[0]);
-    b.vertex(pb[0]!, pb[1]!, pb[2]!, hex[1], w[1]);
-    b.vertex(pc[0]!, pc[1]!, pc[2]!, hex[2], w[2]);
+    b.vertex(pa[0] ?? 0, pa[1] ?? 0, pa[2] ?? 0, hex[0], w[0]);
+    b.vertex(pb[0] ?? 0, pb[1] ?? 0, pb[2] ?? 0, hex[1], w[1]);
+    b.vertex(pc[0] ?? 0, pc[1] ?? 0, pc[2] ?? 0, hex[2], w[2]);
   };
 
   // Body: a lathe along z. Tiny levels drop the middle rings.
-  const profile = rings ? PROFILE : [PROFILE[0]!, PROFILE[2]!, PROFILE[5]!, PROFILE[7]!];
+  const profile = rings ? PROFILE : [item(PROFILE, 0), item(PROFILE, 2), item(PROFILE, 5), item(PROFILE, 7)];
   const ringPoint = (i: number, s: number): number[] => {
-    const [along, factor] = profile[i]!;
+    const [along, factor] = item(profile, i);
     const angle = (s / sides) * Math.PI * 2;
     const r = species.radius * factor;
     return [Math.cos(angle) * r * 0.9, Math.sin(angle) * r * 0.85, along * species.length];
   };
   for (let i = 0; i < profile.length - 1; i++) {
-    const beak = profile[i]![0] >= BEAK_FROM;
+    const beak = item(profile, i)[0] >= BEAK_FROM;
     for (let s = 0; s < sides; s++) {
       const a = ringPoint(i, s), c = ringPoint(i, s + 1), d = ringPoint(i + 1, s), e = ringPoint(i + 1, s + 1);
       const top = Math.sin(((s + 0.5) / sides) * Math.PI * 2) > 0.2;

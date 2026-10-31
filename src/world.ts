@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { WorldLayout } from './terrain.js';
 import { farShelf, farShelfSteps, navShelfSteps, nearShelf, type Land, type ShelfMap } from './land.js';
 import { createOcean, type OceanHandle } from './ocean.js';
-import { createLandStream, type LandStream } from './landmesh.js';
+import { createLandStream, type Dissolve, type LandStream } from './landmesh.js';
 import { createShipStream } from './world-ships.js';
 import { createWorldOrigin, type WorldOrigin } from './world-origin.js';
 import type { Shore } from './shore.js';
@@ -12,16 +12,16 @@ import { damp } from './math.js';
 import { blendLook } from './regions.js';
 import { OPENING_NAV_RADIUS, PLAN_REACH } from './whale-course.js';
 import { createWalkers } from './walkers.js';
+import { createSliceCost } from './slice-cost.js';
 import type { DetailBudget } from './quality.js';
 
-export type WorldOptions = {
+export interface WorldOptions {
   sunDirection: THREE.Vector3;
   hazeColor: THREE.Color;
   hazeDensity: number;
   hazeGradient: { angles: number[]; colors: THREE.Color[] };
   /** Low sun lights the shallows less. */
   shallowLight: number;
-  reflectionGain: number;
   waterSize: number;
   landSegments: number;
   /** Life on the land and its surface detail, by quality tier. */
@@ -30,9 +30,11 @@ export type WorldOptions = {
   mobile: boolean;
   /** Build land tiles and far shelf maps in a worker (browser). */
   worker?: boolean;
-};
+  /** How fading land tiles dissolve (see `LandStreamOptions`); a dither unless the frame is multisampled. */
+  dissolve?: Dissolve | undefined;
+}
 
-export type World = {
+export interface World {
   /** Parent for everything placed in world coordinates (whale, ships, land, birds); sits at −origin. */
   root: THREE.Group;
   origin: WorldOrigin;
@@ -56,9 +58,12 @@ export type World = {
   update: (whaleWorldX: number, whaleWorldZ: number, camera: THREE.Camera, dt: number, time: number) => void;
   stats: () => Record<string, number | number[]>;
   dispose: () => void;
-};
+}
 
-/** All streaming work on the main thread (tiles, ships, navigation, shelf bakes) stays near this per frame. */
+/**
+ * All streaming work on the main thread (tiles, ships, navigation, shelf bakes) stays near this per frame. A loop of
+ * slices stops once the time left would not hold another slice of its job (`slice-cost.ts`).
+ */
 const BUDGET_MS = 2.5;
 /** Navigation tiles and ship cells are centred this many seconds ahead along the whale's motion (capped in metres). */
 const LEAD = 20;
@@ -91,8 +96,6 @@ export function createWorld(seed: number, layout: WorldLayout, scene: THREE.Scen
     textureSize: options.waterSize,
     waterColor: 0x1c5470,
     shelves: { near: nearShelf(land), far: farShelf(land), light: options.shallowLight },
-    reflectionHaze: options.hazeColor,
-    reflectionGain: options.reflectionGain,
   });
   scene.add(ocean.mesh);
 
@@ -105,6 +108,7 @@ export function createWorld(seed: number, layout: WorldLayout, scene: THREE.Scen
     worker: options.worker,
     objects: options.detail.objects,
     microNormal: options.detail.microNormal,
+    dissolve: options.dissolve,
   });
   root.add(landStream.group);
   const walkers = createWalkers(landStream, options.detail.walkers);
@@ -133,6 +137,10 @@ export function createWorld(seed: number, layout: WorldLayout, scene: THREE.Scen
   let farAt = { x: 0, z: 0 };
   let farId = 0;
   let farWaiting = false;
+  const bakeCost = createSliceCost();
+  let frameStart = 0;
+  /** What is left of this frame's budget. */
+  const left = () => BUDGET_MS - (performance.now() - frameStart);
   let worker: Worker | null = null;
   if (options.worker && typeof Worker !== 'undefined') {
     try {
@@ -159,8 +167,20 @@ export function createWorld(seed: number, layout: WorldLayout, scene: THREE.Scen
   const farSteps = (cx: number, cz: number) => farShelfSteps(land, FAR_SIZE, FAR_EXTENT, cx, cz);
 
   function* nearSteps(cx: number, cz: number): Generator<void, ShelfMap> {
-    while (!land.nav.prefetch(cx, cz, 1600 * Math.SQRT2, BUDGET_MS)) yield;
+    // No time of its own: a call builds one slice (so each step is one), and the frame's loop spends the budget.
+    while (!land.nav.prefetch(cx, cz, 1600 * Math.SQRT2, 0)) yield;
     return yield* navShelfSteps(land, cx, cz);
+  }
+
+  /** A bake's slices until the frame's budget cannot hold another; its map once done. */
+  function advance(job: Generator<void, ShelfMap>): ShelfMap | undefined {
+    while (bakeCost.fits(left())) {
+      const t = performance.now();
+      const next = job.next();
+      bakeCost.note(performance.now() - t);
+      if (next.done) return next.value;
+    }
+    return undefined;
   }
 
   const snapShelf = (v: number) => Math.round(v / SHELF_SNAP) * SHELF_SNAP;
@@ -168,11 +188,11 @@ export function createWorld(seed: number, layout: WorldLayout, scene: THREE.Scen
   function bakeShelves(x: number, z: number): void {
     const cx = snapShelf(x);
     const cz = snapShelf(z);
-    if (!nearJob && Math.hypot(whale[0]! - nearAt.x, whale[1]! - nearAt.z) > NEAR_STEP) {
+    if (!nearJob && Math.hypot((whale[0] ?? 0) - nearAt.x, (whale[1] ?? 0) - nearAt.z) > NEAR_STEP) {
       nearAt = { x: cx, z: cz };
       nearJob = nearSteps(cx, cz);
     }
-    if (!farJob && !farWaiting && Math.hypot(whale[0]! - farAt.x, whale[1]! - farAt.z) > FAR_STEP) {
+    if (!farJob && !farWaiting && Math.hypot((whale[0] ?? 0) - farAt.x, (whale[1] ?? 0) - farAt.z) > FAR_STEP) {
       farAt = { x: cx, z: cz };
       if (worker) {
         farId++;
@@ -217,10 +237,10 @@ export function createWorld(seed: number, layout: WorldLayout, scene: THREE.Scen
     ships: { active: ships.active, setVisible: ships.setVisible },
     update(wx, wz, camera, dt, time) {
       const start = performance.now();
-      const left = () => BUDGET_MS - (performance.now() - start);
+      frameStart = start;
       if (dt > 0) {
-        const rx = (wx - whale[0]!) / dt;
-        const rz = (wz - whale[1]!) / dt;
+        const rx = (wx - (whale[0] ?? 0)) / dt;
+        const rz = (wz - (whale[1] ?? 0)) / dt;
         if (Math.hypot(rx, rz) > JUMP_SPEED) {
           vx = 0;
           vz = 0;
@@ -245,32 +265,25 @@ export function createWorld(seed: number, layout: WorldLayout, scene: THREE.Scen
       ships.update(dt, time, wx, wz, land, ax, az);
       bakeShelves(ax, az);
 
-      if (nearJob) {
-        while (left() > 0) {
-          const next = nearJob.next();
-          if (next.done) {
-            ocean.setShelves({ near: next.value });
-            nearJob = null;
-            break;
-          }
-        }
+      const near = nearJob && advance(nearJob);
+      if (near) {
+        ocean.setShelves({ near });
+        nearJob = null;
       }
-      while (farJob && left() > 0) {
-        const next = farJob.next();
-        if (next.done) {
-          ocean.setShelves({ far: next.value });
-          farJob = null;
-        }
+      const far = farJob && advance(farJob);
+      if (far) {
+        ocean.setShelves({ far });
+        farJob = null;
       }
       if (left() > 0) land.nav.prefetch(ax, az, NAV_RADIUS, left());
 
       lastMs = performance.now() - start;
       windowAge += dt;
       if (windowAge > WORST_WINDOW) {
-        worst = [worst[1]!, 0];
+        worst = [worst[1] ?? 0, 0];
         windowAge = 0;
       }
-      worst[1] = Math.max(worst[1]!, lastMs);
+      worst[1] = Math.max(worst[1] ?? 0, lastMs);
       if (landStream.stats().holes > 0) holeFrames++;
       if (!land.nav.ready(wx + vx * 3, wz + vz * 3)) navMisses++;
     },
@@ -289,7 +302,7 @@ export function createWorld(seed: number, layout: WorldLayout, scene: THREE.Scen
         /** Frames so far with a hole in the land inside the haze. */
         coverageMisses: holeFrames,
         streamMs: lastMs,
-        streamWorstMs: Math.max(worst[0]!, worst[1]!),
+        streamWorstMs: Math.max(worst[0] ?? 0, worst[1] ?? 0),
         whaleSpeed: Math.hypot(vx, vz),
         landTriangles: tiles.triangles,
         /** Trees, rocks and houses in the wanted tiles drawn now, and their triangles. */

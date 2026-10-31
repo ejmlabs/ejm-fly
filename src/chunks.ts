@@ -8,12 +8,13 @@ export function chunkCoord(w: number, size: number): number {
 }
 
 export function chunkKey(lod: number, cx: number, cz: number): string {
-  return `${lod}:${cx}:${cz}`;
+  return `${String(lod)}:${String(cx)}:${String(cz)}`;
 }
 
 export function parseChunkKey(key: string): { lod: number; cx: number; cz: number } {
   const [lod, cx, cz] = key.split(':').map(Number);
-  return { lod: lod!, cx: cx!, cz: cz! };
+  if (lod === undefined || cx === undefined || cz === undefined) throw new Error(`Malformed chunk key ${key}`);
+  return { lod, cx, cz };
 }
 
 /** Distance from (x, z) to the nearest point of a cell (0 inside it). */
@@ -32,7 +33,7 @@ export function chunksAround(wx: number, wz: number, radius: number, size: numbe
   const x1 = chunkCoord(wx + radius, size);
   const z0 = chunkCoord(wz - radius, size);
   const z1 = chunkCoord(wz + radius, size);
-  const cells: Array<{ cx: number; cz: number; d: number }> = [];
+  const cells: { cx: number; cz: number; d: number }[] = [];
   for (let cz = z0; cz <= z1; cz++) {
     for (let cx = x0; cx <= x1; cx++) {
       const d = cellDistance(wx, wz, cx, cz, size);
@@ -43,14 +44,14 @@ export function chunksAround(wx: number, wz: number, radius: number, size: numbe
   return cells.map((c) => chunkKey(lod, c.cx, c.cz));
 }
 
-export type ChunkStreamer<T> = {
+export interface ChunkStreamer<T> {
   readonly loaded: ReadonlyMap<string, T>;
   /** Loads wanted chunks (nearest first, within the budget) and unloads ones no longer kept. */
   update: (wx: number, wz: number) => void;
   dispose: () => void;
-};
+}
 
-export type ChunkStreamerOptions<T> = {
+export interface ChunkStreamerOptions<T> {
   /** Keys to load around (wx, wz), nearest first. */
   wanted: (wx: number, wz: number) => string[];
   /** Whether a loaded chunk may stay; should accept a wider ring than `wanted` so a boundary never thrashes. */
@@ -61,7 +62,7 @@ export type ChunkStreamerOptions<T> = {
   /** Stop building once this many milliseconds were spent in one update. */
   budgetMs?: number;
   now?: () => number;
-};
+}
 
 export function createChunkStreamer<T>(options: ChunkStreamerOptions<T>): ChunkStreamer<T> {
   const loaded = new Map<string, T>();

@@ -1,26 +1,26 @@
 import * as THREE from 'three';
 import { clamp, smoothstep } from './math.js';
 import { SURFACE_BAND, WATER_LEVEL, type FollowTarget } from './seams.js';
-import { createSpring, nearestAngle, springSet, springStep, springStepAngle, type Spring } from './spring.js';
+import { createSpring, nearestAngle, springSet, springStep, type Spring } from './spring.js';
 import { DEPTH_SCALE, LENGTH_SCALE, WHALE_LENGTH } from './whale-size.js';
 
 /** Persisted framing. `yaw` is always 0: the chase camera is locked to the whale's heading. */
-export type CameraFraming = { yaw: number; pitch: number; distance: number };
+export interface CameraFraming { yaw: number; pitch: number; distance: number }
 
 /**
  * Debug review view around the target. `yaw` is relative to the whale's heading
  * (0 = straight behind, −π/2 ≈ broadside on its left), `pitch` lifts the eye.
  */
-export type ReviewView = { yaw: number; pitch: number; distance: number; minLookY?: number };
+export interface ReviewView { yaw: number; pitch: number; distance: number; minLookY?: number }
 
 export type CameraMode = 'chase' | 'under' | 'review';
 
-export type FollowCameraOptions = {
-  portrait?: boolean;
+export interface FollowCameraOptions {
+  portrait?: boolean | undefined;
   saved?: CameraFraming | null;
   /** Ground or seabed height in render coordinates; keeps the eye clear of land and floor. */
-  groundAt?: (x: number, z: number) => number;
-};
+  groundAt?: ((x: number, z: number) => number) | undefined;
+}
 
 /** Vertical field of view in degrees: landscape, portrait. Speed lifts it by up to FOV_LIFT. */
 export const FOV: readonly [number, number] = [48, 62];
@@ -103,7 +103,7 @@ export class FollowCamera {
   readonly framing: CameraFraming;
   readonly lookAt = new THREE.Vector3();
   portrait: boolean;
-  private groundAt?: (x: number, z: number) => number;
+  private groundAt: ((x: number, z: number) => number) | undefined;
   private readonly target: FollowTarget = { x: 0, y: 0, z: 0, heading: 0 };
   private review: ReviewView | null = null;
   private lastReview: ReviewView = { yaw: 0, pitch: 0, distance: 20 };
@@ -221,13 +221,13 @@ export class FollowCamera {
   /** User orbit around the whale, relative to its heading and looking at it; null blends back to the chase. */
   setOrbit(view: ReviewView | null): void {
     this.orbit = view ? { ...view } : null;
-    if (view) this.lastOrbit = this.orbit!;
+    if (this.orbit) this.lastOrbit = this.orbit;
   }
 
   /** Debug framing; null returns to the chase with a smooth blend. */
   setReview(view: ReviewView | null): void {
     this.review = view ? { ...view } : null;
-    if (view) this.lastReview = this.review!;
+    if (this.review) this.lastReview = this.review;
   }
 
   /** Jump every spring to its goal on the next update (first frame, review shots). */
@@ -502,9 +502,9 @@ export class FollowCamera {
     const tanH = tanV * this.camera.aspect;
     let worst = 0;
     for (let i = 0; i < 3; i++) {
-      const dx = this.wx[i]! - ex;
-      const dy = this.wy[i]! - ey;
-      const dz = this.wz[i]! - ez;
+      const dx = (this.wx[i] ?? 0) - ex;
+      const dy = (this.wy[i] ?? 0) - ey;
+      const dz = (this.wz[i] ?? 0) - ez;
       const depth = dx * fx + dy * fy + dz * fz;
       if (depth < 0.5) return Infinity;
       const nx = (dx * rx + dz * rz) / (depth * tanH);
